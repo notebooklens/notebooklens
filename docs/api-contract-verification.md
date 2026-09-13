@@ -52,7 +52,7 @@ as HTTP outcomes here. No real account permissions were changed.
 
 ## New contract checks
 
-`tests/fixtures/serialized_thread.json` is checked against the actual Python
+`apps/web/lib/fixtures/serialized_thread.json` is checked against the actual Python
 `serialize_thread` output; Vitest feeds the same JSON through both latest and
 historical workspace GETs. One API-boundary adapter maps nested `github_mirror`
 to the existing component fields. Explicit nested null fields overwrite legacy

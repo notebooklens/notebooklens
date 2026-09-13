@@ -21,7 +21,7 @@ from apps.api.review_workspace import get_workspace_payload, serialize_thread, _
 
 
 def test_shared_frontend_fixture_is_actual_serialized_thread():
-    fixture = json.loads((Path(__file__).parent / "fixtures/serialized_thread.json").read_text())
+    fixture = json.loads((Path(__file__).resolve().parents[1] / "apps/web/lib/fixtures/serialized_thread.json").read_text())
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     thread = ReviewThread(
         id=uuid.UUID(fixture["id"]), managed_review_id=uuid.UUID(fixture["managed_review_id"]),

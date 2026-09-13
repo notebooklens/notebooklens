@@ -15,7 +15,7 @@ import {
   getSnapshotWorkspace,
   postApi,
 } from "@/lib/api";
-import serializedThread from "../../../tests/fixtures/serialized_thread.json";
+import serializedThread from "./fixtures/serialized_thread.json";
 import { summarizeGitHubMirrorStatus } from "@/lib/review-workspace";
 
 
