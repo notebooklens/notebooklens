@@ -24,7 +24,6 @@ import {
   getVisibleBlockKinds,
   groupThreadsByAnchor,
   hasMeaningfulBlockContent,
-  hasVisibleBlocks,
   isBlockChanged,
   summarizeGitHubMirrorStatus,
   summarizeFinding,
@@ -53,6 +52,7 @@ type ReviewWorkspaceProps = {
 const WORKSPACE_TOP_ID = "review-workspace-top";
 const SNAPSHOT_HISTORY_ID = "workspace-snapshot-history";
 const ViewPreferences = createContext({ showPrevious: true, showOutputs: true });
+const CommentDrafts = createContext<Map<string, string> | null>(null);
 
 type RailJumpTarget = {
   id: string;
@@ -74,20 +74,21 @@ export function ReviewWorkspace({
   flashNotice,
 }: ReviewWorkspaceProps) {
   const snapshot = workspace.snapshot;
+  const commentDrafts = useRef(new Map<string, string>());
   const [activeView, setActiveView] = useState<"changes" | "discussions">("changes");
   const [showPrevious, setShowPrevious] = useState(true);
   const [showOutputs, setShowOutputs] = useState(true);
   const availableAnchors = new Set(snapshot?.status === "ready" ? snapshot.payload.review.notebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) => Object.values(row.thread_anchors).map(buildAnchorKey))) : []);
-  const unmatchedThreads = workspace.threads.filter((thread) => thread.anchor_drifted || !availableAnchors.has(buildAnchorKey(thread.anchor)));
+  const unmatchedThreads = workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && (thread.anchor_drifted || !availableAnchors.has(buildAnchorKey(thread.anchor))));
   const unmatchedIds = new Set(unmatchedThreads.map((thread) => thread.id));
-  const threadsByAnchor = groupThreadsByAnchor(workspace.threads.filter((thread) => !unmatchedIds.has(thread.id)));
-  const openThreads = workspace.threads.filter((thread) => thread.status === "open");
+  const threadsByAnchor = groupThreadsByAnchor(workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && !unmatchedIds.has(thread.id)));
+  const openThreads = workspace.threads.filter((thread) => thread.status === "open" && thread.anchor.block_kind !== "metadata");
   const [openComposerKey, setOpenComposerKey] = useState<string | null>(null);
   const visibleNotebooks = snapshot?.status === "ready"
     ? snapshot.payload.review.notebooks.filter(
         (notebook) =>
           notebook.notices.length > 0 ||
-          notebook.render_rows.some((row) => hasVisibleBlocks(row, threadsByAnchor)),
+          notebook.render_rows.some((row) => hasVisibleReviewBlocks(row, threadsByAnchor)),
       )
     : [];
   const railNavigation = collectRailNavigationData(visibleNotebooks, threadsByAnchor);
@@ -107,6 +108,7 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     setOpenComposerKey(null);
+    commentDrafts.current.clear();
   }, [snapshot?.id]);
 
   useEffect(() => {
@@ -124,7 +126,7 @@ export function ReviewWorkspace({
   }, [snapshot?.id]);
 
   return (
-    <ViewPreferences.Provider value={{ showPrevious, showOutputs }}><div className="workspace-shell notebook-document-workspace" id={WORKSPACE_TOP_ID} onClick={(event) => {
+    <CommentDrafts.Provider value={commentDrafts.current}><ViewPreferences.Provider value={{ showPrevious, showOutputs }}><div className="workspace-shell notebook-document-workspace" id={WORKSPACE_TOP_ID} onClick={(event) => {
       const link = (event.target as Element).closest("a[href^='#']");
       const fragment = link?.getAttribute("href")?.slice(1);
       if (fragment) {
@@ -177,13 +179,13 @@ export function ReviewWorkspace({
         <label><input type="checkbox" checked={showPrevious} onChange={(event) => setShowPrevious(event.target.checked)} /> Show previous version</label>
         <label><input type="checkbox" checked={showOutputs} onChange={(event) => setShowOutputs(event.target.checked)} /> Show outputs</label>
       </nav>
-      <section hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
+      <main hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
         <h2>Discussions on this push</h2>
-        {workspace.threads.length ? workspace.threads.map((thread) => <article key={thread.id}><p>{thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}{unmatchedIds.has(thread.id) ? " · Anchor needs review" : ""}</p><ThreadCard thread={thread} currentPath={currentPath} surface="index" /></article>) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
-      </section><div hidden={activeView !== "changes"} data-review-changes className="workspace-grid">
+        {workspace.threads.length ? workspace.threads.map((thread) => <article key={thread.id}><p>{thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}{thread.anchor_drifted || unmatchedIds.has(thread.id) ? " · Anchor needs review" : ""}</p><ThreadCard thread={thread} currentPath={currentPath} surface="index" /></article>) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
+      </main><div hidden={activeView !== "changes"} data-review-changes className="workspace-grid">
         <main className="workspace-main">
           {snapshot ? (
-            <SnapshotOverview review={workspace.review} snapshot={snapshot} />
+            <SnapshotOverview review={workspace.review} snapshot={snapshot} visibleNotebooks={visibleNotebooks} />
           ) : (
             <EmptyState
               title="This review is not ready yet"
@@ -218,7 +220,7 @@ export function ReviewWorkspace({
                     {visibleNotebooks.map((notebook) => {
                       const [directoryLabel, fileLabel] = splitNotebookPath(notebook.path);
                       const reviewItemCount = notebook.render_rows.filter((row) =>
-                        hasVisibleBlocks(row, threadsByAnchor),
+                        hasVisibleReviewBlocks(row, threadsByAnchor),
                       ).length;
                       const threadCount = countThreadsForNotebook(notebook, threadsByAnchor);
 
@@ -265,8 +267,8 @@ export function ReviewWorkspace({
           {snapshot?.status === "ready" &&
           visibleNotebooks.length === 0 ? (
             <EmptyState
-              title="No reviewable notebook changes on this push"
-              description="Choose another push from the sidebar if you want to compare a different update."
+              title="No code or output changes on this push"
+              description="Existing conversations remain available in Discussions. Choose another push to compare a different update."
             />
           ) : null}
           {unmatchedThreads.length ? (
@@ -340,18 +342,22 @@ export function ReviewWorkspace({
           </div>
         </div>
       </details>
-    </div></ViewPreferences.Provider>
+    </div></ViewPreferences.Provider></CommentDrafts.Provider>
   );
 }
 
 
 type SnapshotOverviewProps = {
+  visibleNotebooks: SnapshotNotebook[];
   review: WorkspacePayload["review"];
   snapshot: ReviewSnapshotRecord;
 };
 
 
-function SnapshotOverview({ review, snapshot }: SnapshotOverviewProps) {
+function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOverviewProps) {
+  const changedRows = visibleNotebooks.map((notebook) => notebook.render_rows.filter((row) => (["source", "outputs"] as const).some((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind))));
+  const changedNotebookCount = changedRows.filter((rows) => rows.length > 0).length;
+  const changedCellCount = changedRows.reduce((count, rows) => count + rows.length, 0);
   const reviewSignalCount =
     snapshot.payload.review.notices.length +
     snapshot.flagged_findings.length +
@@ -363,9 +369,9 @@ function SnapshotOverview({ review, snapshot }: SnapshotOverviewProps) {
         <div>
           <p className="summary-text snapshot-summary-kicker">
             Push {snapshot.snapshot_index} ·{" "}
-            {snapshot.notebook_count} notebook{snapshot.notebook_count === 1 ? "" : "s"} changed ·{" "}
-            {snapshot.changed_cell_count} changed cell
-            {snapshot.changed_cell_count === 1 ? "" : "s"}
+            {changedNotebookCount} notebook{changedNotebookCount === 1 ? "" : "s"} with code/output changes ·{" "}
+            {changedCellCount} changed cell
+            {changedCellCount === 1 ? "" : "s"}
           </p>
         </div>
         {snapshot.status !== "ready" ? <span>{formatSnapshotStatusLabel(snapshot.status)}</span> : null}
@@ -487,7 +493,7 @@ function NotebookCard({
   const [directoryLabel, fileLabel] = splitNotebookPath(notebook.path);
   const notebookThreads = getThreadsForNotebook(notebook, threadsByAnchor);
   const openThreadCount = notebookThreads.filter((thread) => thread.status === "open").length;
-  const visibleRows = notebook.render_rows.filter((row) => hasVisibleBlocks(row, threadsByAnchor));
+  const visibleRows = notebook.render_rows.filter((row) => hasVisibleReviewBlocks(row, threadsByAnchor));
   const notebookSectionId = buildNotebookSectionId(notebook.path);
   const notebookReviewSummary = buildNotebookReviewSummary({
     firstVisibleRow: visibleRows[0] ?? null,
@@ -615,7 +621,7 @@ function CellRowCard({
   openComposerKey,
   onToggleComposer,
 }: CellRowCardProps) {
-  const blocks = getVisibleBlockKinds(row, threadsByAnchor);
+  const blocks = getReviewBlockKinds(row, threadsByAnchor);
 
   return (
     <article className="cell-card cell-card-flat">
@@ -627,6 +633,7 @@ function CellRowCard({
         </h3>
         <div className="cell-card-meta cell-card-meta-inline">
           <StatusPill label={formatRowChangeLabel(row.change_type)} tone="default" />
+          {row.change_type === "moved" && row.locator.base_index !== null && row.locator.head_index !== null ? <span>Cell {row.locator.base_index + 1} → {row.locator.head_index + 1}</span> : null}
         </div>
       </div>
 
@@ -681,12 +688,7 @@ function CellRowCard({
               />
             </section>
           );
-          return blockKind === "metadata" ? (
-            <details className="metadata-disclosure" key={blockKind}>
-              <summary>Metadata{row.change_type === "added" ? " included with added cell" : row.change_type === "removed" ? " removed with cell" : row.metadata.changed ? " changed" : " discussions"}{threads.length ? ` · ${threads.length} discussion${threads.length === 1 ? "" : "s"}` : ""}</summary>
-              {content}
-            </details>
-          ) : content;
+          return content;
         })}
       </div>
     </article>
@@ -702,16 +704,17 @@ function BlockContent({
   row: RenderRow;
 }) {
   const { showPrevious, showOutputs } = useContext(ViewPreferences);
+  const removed = row.change_type === "deleted" || row.change_type === "removed";
   if (!hasMeaningfulBlockContent(row, blockKind)) {
     return null;
   }
 
   if (blockKind === "source") {
-    if (row.change_type === "added" || row.change_type === "removed" || !showPrevious) {
-      const value = row.change_type === "removed" ? row.source.base : row.source.head;
-      const label = row.change_type === "removed" ? "Removed cell" : row.change_type === "added" ? "Added cell" : "Current version";
+    if (row.change_type === "added" || removed || !showPrevious) {
+      const value = removed ? row.source.base : row.source.head;
+      const label = removed ? "Removed cell" : row.change_type === "added" ? "Added cell" : "Current version";
       const singleDiff = computeLineDiff(row.source.base, row.source.head);
-      const lines = row.change_type === "added" || row.change_type === "removed" ? value?.split("\n").map((content, index) => ({ content, lineNumber: index + 1, status: "unchanged" as const })) : singleDiff.headLines;
+      const lines = row.change_type === "added" || removed ? value?.split("\n").map((content, index) => ({ content, lineNumber: index + 1, status: "unchanged" as const })) : singleDiff.headLines;
       return row.cell_type === "markdown" ? <MarkdownPane label={label} value={value} /> : <>{!singleDiff.bounded ? <p role="note">Large cell: showing full source without computed change highlighting.</p> : null}<CodePane label={label} value={value} diffLines={lines} /></>;
     }
     if (row.cell_type === "markdown") {
@@ -736,8 +739,8 @@ function BlockContent({
 
   if (blockKind === "outputs") {
     const outputItems = getMeaningfulOutputItems(row);
-    if (row.change_type === "added" || row.change_type === "removed") {
-      const side = row.change_type === "removed" ? "base" : "head";
+    if (row.change_type === "added" || removed) {
+      const side = removed ? "base" : "head";
       return <>{!showOutputs ? <p className="muted-copy">Outputs hidden. Enable Show outputs to inspect them; discussions remain below.</p> : null}<div hidden={!showOutputs} className="output-list">{outputItems.filter((item) => !item.side || item.side === side).map((item, index) => <OutputItemCard key={`${item.kind}-${index}`} item={item} />)}</div></>;
     }
 
@@ -754,11 +757,7 @@ function BlockContent({
     );
   }
 
-  return (
-    <div className="metadata-card">
-      <p>{row.change_type === "added" ? "Metadata is included with this added cell." : row.change_type === "removed" ? "Metadata was removed with this cell." : row.metadata.summary}</p>
-    </div>
-  );
+  return null;
 }
 
 
@@ -1061,6 +1060,8 @@ function InlineThreadComposer({
   onCancel: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const drafts = useContext(CommentDrafts);
+  const draftKey = `${snapshotId}:${buildAnchorKey(anchor)}`;
 
   useEffect(() => {
     const focusHandle = window.requestAnimationFrame(() => {
@@ -1091,6 +1092,8 @@ function InlineThreadComposer({
         autoFocus
         aria-label="New discussion comment"
         name="bodyMarkdown"
+        defaultValue={drafts?.get(draftKey) ?? ""}
+        onChange={(event) => drafts?.set(draftKey, event.target.value)}
         placeholder="Ask for context, call out a regression, or note the follow-up you want here."
         ref={textareaRef}
         required
@@ -1098,7 +1101,7 @@ function InlineThreadComposer({
       />
       <div className="thread-form-actions">
         <span className="muted-copy">Posts to this review block.</span>
-        <button className="ghost-button thread-inline-button" onClick={onCancel} type="button">
+        <button className="ghost-button thread-inline-button" onClick={() => { drafts?.delete(draftKey); onCancel(); }} type="button">
           Cancel
         </button>
         <button className="primary-button thread-inline-button" type="submit">
@@ -1290,7 +1293,7 @@ function QuickJumpRailCard({
         />
         <RailJumpButton
           activeHash={activeHash}
-          emptyStateLabel="No unresolved threads are attached to this push."
+          emptyStateLabel="No unresolved code/output discussions in Changes."
           label="Next unresolved thread"
           targets={threadTargets}
           onNavigate={setActiveHash}
@@ -1537,7 +1540,7 @@ function formatChangeTypeLabel(changeType: SnapshotNotebook["change_type"]): str
   if (changeType === "added") {
     return "new";
   }
-  if (changeType === "deleted") {
+  if (changeType === "deleted" || changeType === "removed") {
     return "removed";
   }
   return changeType;
@@ -1562,7 +1565,7 @@ function formatRowChangeLabel(changeType: RenderRow["change_type"]): string {
   if (changeType === "added") {
     return "added";
   }
-  if (changeType === "deleted") {
+  if (changeType === "deleted" || changeType === "removed") {
     return "removed";
   }
   if (changeType === "output_changed") {
@@ -1624,7 +1627,7 @@ function collectRailNavigationData(
         });
       }
 
-      for (const blockKind of getVisibleBlockKinds(row, threadsByAnchor)) {
+      for (const blockKind of getReviewBlockKinds(row, threadsByAnchor)) {
         const threads = threadsByAnchor.get(buildAnchorKey(row.thread_anchors[blockKind])) ?? [];
 
         for (const thread of threads) {
@@ -1673,6 +1676,16 @@ function getThreadsForNotebook(
   }
 
   return notebookThreads;
+}
+
+function hasVisibleReviewBlocks(row: RenderRow, threads: Map<string, ReviewThread[]>): boolean {
+  return getReviewBlockKinds(row, threads).length > 0;
+}
+
+function getReviewBlockKinds(row: RenderRow, threads: Map<string, ReviewThread[]>): ("source" | "outputs")[] {
+  const blocks = getVisibleBlockKinds(row, threads).filter((kind) => kind !== "metadata");
+  if (row.change_type === "moved" && !blocks.includes("source")) blocks.unshift("source");
+  return blocks;
 }
 
 
@@ -1743,7 +1756,7 @@ function buildNotebookReviewSummary({
 
 function formatThreadAnchorSummary(anchor: ThreadAnchor): string {
   const displayIndex = anchor.cell_locator.display_index;
-  const cellLabel = displayIndex === null ? "Notebook-level" : `Cell ${displayIndex}`;
+  const cellLabel = displayIndex === null ? "Notebook-level" : formatCellLabel({ locator: anchor.cell_locator });
 
   return `${cellLabel} · ${blockTitle(anchor.block_kind)}`;
 }

@@ -307,11 +307,10 @@ describe("review workspace rendering", () => {
     expect(markup.match(/id="thread-thread-id"/g)).toHaveLength(1);
   });
 
-  it("keeps metadata collapsed and labels added-cell metadata truthfully", () => {
+  it("omits per-cell metadata from the code review", () => {
     const markup = renderWorkspace(buildRow({ change_type: "added", metadata: { changed: true, summary: "material metadata changed" } }));
-    expect(markup).toContain('class="metadata-disclosure"');
-    expect(markup).not.toContain('class="metadata-disclosure" open');
-    expect(markup).toContain("Metadata included with added cell");
+    expect(markup).not.toContain('class="metadata-disclosure"');
+    expect(markup).not.toContain("Metadata included with added cell");
     expect(markup).not.toContain("material metadata changed");
   });
   it("keeps the create-thread composer hidden until a reviewer opens it", () => {
@@ -348,7 +347,7 @@ describe("review workspace rendering", () => {
     expect(markup).not.toContain("Output summary diff");
     expect(markup).not.toContain("Metadata diff");
     expect(markup).not.toContain("Metric output changed.");
-    expect(markup).toContain("No reviewable notebook changes on this push");
+    expect(markup).toContain("No code or output changes on this push");
   });
 
   it("skips empty output cards inside an otherwise meaningful output block", () => {

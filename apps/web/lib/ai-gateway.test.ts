@@ -83,4 +83,15 @@ describe("ai gateway helpers", () => {
       "Static headers must use 'Header-Name: value' format.",
     );
   });
+
+  it("reports original line numbers without reflecting confidential header input", () => {
+    const marker = "synthetic-private-value-never-display";
+    for (const text of [`\n${marker}`, `\n: ${marker}`, `\n${marker}:`]) {
+      expect(() => parseStaticHeadersInput(text)).toThrow("Check line 2.");
+      try { parseStaticHeadersInput(text); } catch (error) {
+        expect((error as Error).message).not.toContain(marker);
+      }
+    }
+    expect(() => parseStaticHeadersInput(`${marker}: first\n${marker}: second`)).toThrow("Duplicate static header at line 2.");
+  });
 });

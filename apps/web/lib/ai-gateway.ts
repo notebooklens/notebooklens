@@ -66,14 +66,14 @@ export function parseStaticHeadersInput(value: string): Record<string, string> {
   const headers: Record<string, string> = {};
   const lines = value
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .map((line) => line.trim());
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    if (!line) continue;
     const delimiter = line.indexOf(":");
     if (delimiter <= 0 || delimiter === line.length - 1) {
       throw new Error(
-        `Static headers must use 'Header-Name: value' format. Invalid line: ${line}`,
+        `Static headers must use 'Header-Name: value' format. Check line ${index + 1}.`,
       );
     }
 
@@ -81,11 +81,11 @@ export function parseStaticHeadersInput(value: string): Record<string, string> {
     const headerValue = line.slice(delimiter + 1).trim();
     if (!key || !headerValue) {
       throw new Error(
-        `Static headers must use 'Header-Name: value' format. Invalid line: ${line}`,
+        `Static headers must use 'Header-Name: value' format. Check line ${index + 1}.`,
       );
     }
     if (Object.hasOwn(headers, key)) {
-      throw new Error(`Duplicate static header: ${key}`);
+      throw new Error(`Duplicate static header at line ${index + 1}.`);
     }
     headers[key] = headerValue;
   }

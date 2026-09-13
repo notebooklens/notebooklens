@@ -17,6 +17,7 @@ completed live acceptance or permission to retire a license.
 
 Read [replacement scope](docs/replacement-plan.md),
 [notebook review UX](docs/review-ux-plan.md),
+[frontend guidelines](docs/frontend-guidelines.md),
 [local acceptance](docs/local-acceptance.md), and
 [dependency security](docs/security-dependencies.md) before related changes.
 These contain historical milestones as well as gaps: verify current code and
@@ -52,6 +53,12 @@ verify results independently before integration. Reading this guide does not
 authorize publishing, pushing, merging, deploying, changing App permissions, or
 exposing local services. Follow the current user's scope and approval rules.
 
+For authorized automation-authored commits, set a non-personal author and
+committer identity per command (for example, `NotebookLens Automation` and
+`automation@notebooklens.invalid`). Do not inherit a personal local Git profile
+or change global Git configuration. Preserve existing human attribution by
+default; rewriting history requires explicit approval.
+
 From the repository root (Python 3.12 matches CI):
 
 ```bash
@@ -84,7 +91,10 @@ authenticated live workflow acceptance.
 
 Reviewers must understand notebook changes without interpreting raw JSON.
 Provide clear aligned before/after code, source line context, readable outputs,
-neutral presentation of wholly added cells, and collapsed metadata details.
+neutral presentation of wholly added cells, and no metadata review chrome.
+Preserve existing metadata-anchored conversations in Discussions. Read the
+frontend guidelines in full before UI changes; `apps/web/AGENTS.md` adds the
+frontend-specific verification requirements.
 Place discussions at the correct notebook/cell/snapshot anchor; preserve drafts
 during filtering, navigation, and refresh. Never invent historical anchor
 placements or silently discard unresolved/outdated discussions.

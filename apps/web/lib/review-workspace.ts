@@ -261,7 +261,7 @@ export function readFlashNotice(
 }
 
 
-export function formatCellLabel(row: RenderRow): string {
+export function formatCellLabel(row: Pick<RenderRow, "locator">): string {
   const displayIndex = row.locator.display_index;
   const ordinal = displayIndex === null ? "Unknown" : `${displayIndex + 1}`;
   return `Cell ${ordinal}`;
