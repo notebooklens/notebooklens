@@ -128,13 +128,19 @@ async function apiRequest<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const cookieStore = await cookies();
+  // Route handlers expose Next's mutable ResponseCookies adapter, which has no
+  // `.size` and whose toString() uses Set-Cookie syntax. Serialize only request
+  // name/value pairs through the API shared by both mutable and readonly stores.
+  const forwardedCookies = cookieStore.getAll()
+    .map(({ name, value }) => `${name}=${encodeURIComponent(value)}`)
+    .join("; ");
   const response = await fetch(new URL(path, getApiBaseUrl()), {
     ...init,
     cache: "no-store",
     headers: {
       Accept: "application/json",
       ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...(cookieStore.size > 0 ? { Cookie: cookieStore.toString() } : {}),
+      ...(forwardedCookies ? { Cookie: forwardedCookies } : {}),
       ...init.headers,
     },
   });

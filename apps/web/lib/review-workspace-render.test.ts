@@ -423,6 +423,11 @@ describe("review workspace rendering", () => {
     );
 
     expect(markup).toContain("Push details");
+    expect(markup).toContain('aria-label="Workspace navigation"');
+    expect(markup).toMatch(/href="\/"[^>]*>Home<\/a>/);
+    expect(markup).toContain('aria-label="Push controls"');
+    expect(markup).not.toContain('class="workspace-sidebar"');
+    expect(markup).not.toContain('workspace-utility-card');
     expect(markup).toContain("Jump between notebooks");
     expect(markup).toContain("2 changed notebooks");
     expect(markup).toContain("Two notebooks changed in this review version.");

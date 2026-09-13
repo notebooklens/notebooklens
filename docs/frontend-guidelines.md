@@ -17,6 +17,10 @@ contextual question, follow its discussion, and return without losing work.
 - Keep notebook navigation and the current notebook/cell context discoverable
   while reading. Do not put the only navigation inside several disclosures or
   behind the entire notebook document.
+- Provide an explicit Home route from review and settings pages. Keep account/
+  team settings in a compact header menu and push switching beside push details.
+  Dropdowns must remain above notebook surfaces, fit narrow viewports, close on
+  Escape/outside interaction, and place keyboard focus at a visible jump target.
 - Prioritize code and outputs over installation details, AI settings, timestamps,
   duplicate status badges, and administrative explanations.
 - Do not add a "What needs attention" summary/disclosure or generic reviewer

@@ -27,6 +27,9 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
   workspace.threads = [buildThread(row)];
   let creates = 0;
   let reads = 0;
+  let authenticatedReads = 0;
+  let authenticatedCreates = 0;
+  const syntheticSession = "synthetic-next-session-not-a-real-credential";
   try {
     for (const entry of ["app", "components", "lib", "package.json", "tsconfig.json", "next.config.ts"]) {
       await cp(path.join(root, entry), path.join(temporary, entry), { recursive: true });
@@ -34,14 +37,20 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     await symlink(path.join(root, "node_modules"), path.join(temporary, "node_modules"), "dir");
     api = createServer((request, response) => { void (async () => {
       response.setHeader("Content-Type", "application/json");
+      if (request.url?.startsWith("/api/reviews/") && request.headers.cookie !== `notebooklens_session=${syntheticSession}`) {
+        response.writeHead(401).end(JSON.stringify({ detail: "Authentication required" }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/reviews/example/notebooks/pulls/7") {
         reads++;
+        authenticatedReads++;
         response.end(JSON.stringify(workspace));
       } else if (request.method === "POST" && request.url === "/api/reviews/review-id/threads") {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk as Uint8Array));
         const body = JSON.parse(Buffer.concat(chunks).toString()) as { anchor: typeof row.thread_anchors.source; body_markdown: string };
         creates++;
+        authenticatedCreates++;
         const thread = buildThread(row, { id: "created-thread", anchor: body.anchor, carried_forward: false });
         thread.messages = [{ ...thread.messages[0], id: "created-message", body_markdown: body.body_markdown }];
         workspace.threads.push(thread);
@@ -79,6 +88,7 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
       outbound.push("blocked non-local browser request");
       return route.abort();
     });
+    await page.context().addCookies([{ name: "notebooklens_session", value: syntheticSession, url: origin, httpOnly: true, sameSite: "Lax" }]);
     await page.goto(`${origin}/reviews/example/notebooks/pulls/7`);
     const changes = page.locator("[data-review-changes]");
     await changes.getByText("Reply", { exact: true }).first().click();
@@ -96,6 +106,8 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     await expect(changes.locator(".message-body").getByText("Created through real Next RSC", { exact: true })).toBeVisible();
     expect(reads).toBeGreaterThan(readsBefore);
     expect(creates).toBe(1);
+    expect(authenticatedCreates).toBe(1);
+    expect(authenticatedReads).toBeGreaterThan(1);
     await expect(comment).toHaveValue("");
     await expect(reply).toHaveValue("Unsubmitted reply stays mounted");
     await page.getByRole("button", { name: "Add comment on Cell 2 outputs", exact: true }).click();

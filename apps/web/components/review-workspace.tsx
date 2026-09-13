@@ -3,7 +3,7 @@
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -117,7 +117,7 @@ export function ReviewWorkspace({
       if (target.closest("[data-review-changes]")) setActiveView("changes");
       if (target.closest(".discussion-index")) setActiveView("discussions");
       revealFragment(target.id);
-      window.requestAnimationFrame(() => revealFragment(target.id));
+      focusFragment(target.id);
     };
     reveal();
     window.addEventListener("hashchange", reveal);
@@ -133,6 +133,26 @@ export function ReviewWorkspace({
         revealFragment(fragment);
       }
     }}>
+      <nav className="workspace-topbar" aria-label="Workspace navigation">
+        <div className="workspace-home-links">
+          <Link className="workspace-brand" href="/">NotebookLens</Link>
+          <Link className="text-link" href="/">Home</Link>
+        </div>
+        <WorkspaceMenu label={<><span aria-hidden="true">☰</span> Settings</>} align="end">
+          <h2>Sign-in &amp; team settings</h2>
+          <p className="muted-copy">{installationLabel}</p>
+          <div className="workspace-settings-actions">
+            <Link className="text-link" href={buildAiGatewayRoute(workspace.review.owner, workspace.review.repo, workspace.review.pull_number) as Route}>
+              Open team AI settings
+            </Link>
+            <a className="text-link" href={buildLoginHref(currentPath)}>Refresh GitHub access</a>
+            <form action={buildWorkspaceActionPath("logout")} method="post">
+              <input name="returnTo" type="hidden" value="/" />
+              <button className="secondary-button" type="submit">Sign out</button>
+            </form>
+          </div>
+        </WorkspaceMenu>
+      </nav>
       <header className="summary-card workspace-pr-strip">
         <div className="workspace-pr-strip-main">
           <p className="workspace-breadcrumb">
@@ -177,20 +197,27 @@ export function ReviewWorkspace({
         <button type="button" aria-pressed={activeView === "discussions"} onClick={() => setActiveView("discussions")}>Discussions ({workspace.threads.length})</button>
         <label><input type="checkbox" checked={showPrevious} onChange={(event) => setShowPrevious(event.target.checked)} /> Show previous version</label>
         <label><input type="checkbox" checked={showOutputs} onChange={(event) => setShowOutputs(event.target.checked)} /> Show outputs</label>
+        <WorkspaceMenu label="Navigate review" align="end">
+          {snapshot?.status === "ready" ? (
+            <QuickJumpRailCard notebookTargets={railNavigation.notebookTargets} outputTargets={railNavigation.outputTargets} threadTargets={railNavigation.threadTargets} onRevealChanges={() => setActiveView("changes")} />
+          ) : <p>Navigation is available when this push is ready.</p>}
+          {primaryOpenThread ? <OpenThreadRailCard openThreadCount={openThreads.length} thread={primaryOpenThread} /> : null}
+        </WorkspaceMenu>
       </nav>
+      {snapshot ? (
+        <SnapshotOverview review={workspace.review} snapshot={snapshot} visibleNotebooks={visibleNotebooks} />
+      ) : <SnapshotHistoryRailCard review={workspace.review} />}
       <main hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
         <h2>Discussions on this push</h2>
         {workspace.threads.length ? workspace.threads.map((thread) => <article key={thread.id}><p>{thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}{thread.anchor_drifted || unmatchedIds.has(thread.id) ? " · Anchor needs review" : ""}</p><ThreadCard thread={thread} currentPath={currentPath} surface="index" /></article>) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
       </main><div hidden={activeView !== "changes"} data-review-changes className="workspace-grid">
         <main className="workspace-main">
-          {snapshot ? (
-            <SnapshotOverview review={workspace.review} snapshot={snapshot} visibleNotebooks={visibleNotebooks} />
-          ) : (
+          {!snapshot ? (
             <EmptyState
               title="This review is not ready yet"
               description="Open the PR check run again after NotebookLens finishes loading the latest push."
             />
-          )}
+          ) : null}
 
           {snapshot?.status === "failed" ? (
             <EmptyState
@@ -279,70 +306,45 @@ export function ReviewWorkspace({
           ) : null}
         </main>
 
-        <aside className="workspace-sidebar">
-          <details className="review-navigation-disclosure"><summary>Navigate changes and discussions</summary>
-          {snapshot?.status === "ready" ? (
-            <QuickJumpRailCard
-              notebookTargets={railNavigation.notebookTargets}
-              outputTargets={railNavigation.outputTargets}
-              threadTargets={railNavigation.threadTargets}
-            />
-          ) : null}
-
-          {primaryOpenThread ? (
-            <OpenThreadRailCard
-              openThreadCount={openThreads.length}
-              thread={primaryOpenThread}
-            />
-          ) : null}
-
-          </details>
-          <SnapshotHistoryRailCard review={workspace.review} />
-        </aside>
       </div>
-
-      <details className="summary-card workspace-utility-card">
-        <summary className="workspace-utility-summary">
-          <span>
-            <strong>Sign-in &amp; team settings</strong>
-            <span className="history-caption notebook-jump-summary-copy">
-              Keep these nearby without interrupting the diff.
-            </span>
-          </span>
-          <span className="muted-copy">Open only if needed</span>
-        </summary>
-        <div className="workspace-utility-panel">
-          <p className="muted-copy">
-            Refresh GitHub access, sign out, or adjust team AI settings for{" "}
-            {installationLabel}.
-          </p>
-          <div className="workspace-utility-actions">
-            <a className="secondary-button" href={buildLoginHref(currentPath)}>
-              Refresh GitHub access
-            </a>
-            <form action={buildWorkspaceActionPath("logout")} method="post">
-              <input name="returnTo" type="hidden" value={currentPath} />
-              <button className="ghost-button" type="submit">
-                Sign out
-              </button>
-            </form>
-            <Link
-              className="text-link"
-              href={
-                buildAiGatewayRoute(
-                  workspace.review.owner,
-                  workspace.review.repo,
-                  workspace.review.pull_number,
-                ) as Route
-              }
-            >
-              Open team AI settings
-            </Link>
-          </div>
-        </div>
-      </details>
     </div></ViewPreferences.Provider></CommentDrafts.Provider>
   );
+}
+
+// Native disclosures keep links/forms keyboard-operable without pretending to
+// implement an ARIA application menu. Panels do not unmount notebook drafts.
+function WorkspaceMenu({ label, children, align = "start", id }: {
+  label: ReactNode;
+  children: ReactNode;
+  align?: "start" | "end";
+  id?: string;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent | FocusEvent) => {
+      if (event.target instanceof Node && !ref.current?.contains(event.target) && ref.current) ref.current.open = false;
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("focusin", closeOutside);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("focusin", closeOutside);
+    };
+  }, []);
+  return <details ref={ref} id={id} className={`workspace-menu workspace-menu-${align}`} onKeyDown={(event) => {
+    if (event.key === "Escape" && ref.current?.open) {
+      event.preventDefault();
+      ref.current.open = false;
+      ref.current.querySelector("summary")?.focus();
+    }
+  }} onClick={(event) => {
+    if ((event.target as Element).closest("a, button") && ref.current) ref.current.open = false;
+    const href = (event.target as Element).closest("a")?.getAttribute("href");
+    if (href?.startsWith("#")) focusFragment(href.slice(1));
+  }}>
+    <summary>{label}</summary>
+    <div className="workspace-menu-panel">{children}</div>
+  </details>;
 }
 
 
@@ -377,8 +379,8 @@ function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOvervi
       {snapshot.payload.review.notices.map((notice) => (
         <p className="muted-copy" role="note" key={notice}>{notice}</p>
       ))}
-      <details className="snapshot-disclosure">
-        <summary>Push details</summary>
+      <div className="snapshot-controls" aria-label="Push controls">
+      <WorkspaceMenu label="Push details">
         <div className="snapshot-disclosure-panel">
           <div className="snapshot-strip snapshot-context-strip">
             <span>Prepared {formatTimestamp(snapshot.created_at)}</span>
@@ -407,7 +409,9 @@ function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOvervi
             </div>
           </div>
         </div>
-      </details>
+      </WorkspaceMenu>
+      <SnapshotHistoryRailCard review={review} />
+      </div>
     </section>
   );
 }
@@ -1208,12 +1212,15 @@ function QuickJumpRailCard({
   notebookTargets,
   threadTargets,
   outputTargets,
+  onRevealChanges,
 }: {
   notebookTargets: RailJumpTarget[];
   threadTargets: RailJumpTarget[];
   outputTargets: RailJumpTarget[];
+  onRevealChanges: () => void;
 }) {
   const [activeHash, setActiveHash] = useState("");
+  const navigate = (hash: string) => { onRevealChanges(); setActiveHash(hash); };
 
   useEffect(() => {
     const syncHash = () => {
@@ -1238,21 +1245,21 @@ function QuickJumpRailCard({
           emptyStateLabel="No notebooks with open threads on this push."
           label="Next notebook with open threads"
           targets={notebookTargets}
-          onNavigate={setActiveHash}
+          onNavigate={navigate}
         />
         <RailJumpButton
           activeHash={activeHash}
           emptyStateLabel="No unresolved code/output discussions in Changes."
           label="Next unresolved thread"
           targets={threadTargets}
-          onNavigate={setActiveHash}
+          onNavigate={navigate}
         />
         <RailJumpButton
           activeHash={activeHash}
           emptyStateLabel="No changed outputs are visible in this push."
           label="Next changed output"
           targets={outputTargets}
-          onNavigate={setActiveHash}
+          onNavigate={navigate}
         />
       </div>
       <div className="sidebar-jump-footer">
@@ -1316,18 +1323,10 @@ function SnapshotHistoryRailCard({
   review: WorkspacePayload["review"];
 }) {
   return (
-    <details className="side-card side-card-compact sidebar-disclosure" id={SNAPSHOT_HISTORY_ID}>
-      <summary className="sidebar-disclosure-summary">
-        <span>
-          <strong>Switch push</strong>
-          <span className="history-caption notebook-jump-summary-copy">
-            {review.snapshot_history.length} saved{" "}
-            {pluralize(review.snapshot_history.length, "push")}
-          </span>
-        </span>
-        <span className="muted-copy">Open only if needed</span>
-      </summary>
-      <div className="history-list">
+    <WorkspaceMenu label="Switch push" id={SNAPSHOT_HISTORY_ID}>
+      <h2>Saved pushes ({review.snapshot_history.length})</h2>
+      <nav className="history-list" aria-label="Push history">
+        {review.snapshot_history.length === 0 ? <p>No saved pushes yet.</p> : null}
         {review.snapshot_history
           .slice()
           .reverse()
@@ -1354,6 +1353,7 @@ function SnapshotHistoryRailCard({
                     : ""
                 }`}
                 href={href as Route}
+                aria-current={review.selected_snapshot_index === entry.snapshot_index ? "page" : undefined}
                 key={entry.id}
               >
                 <span>
@@ -1365,8 +1365,8 @@ function SnapshotHistoryRailCard({
               </Link>
             );
           })}
-      </div>
-    </details>
+      </nav>
+    </WorkspaceMenu>
   );
 }
 
@@ -1741,9 +1741,10 @@ function jumpToFragment(fragmentId: string, onNavigate: (hash: string) => void):
 
   const nextHash = `#${fragmentId}`;
   revealFragment(fragmentId);
+  focusFragment(fragmentId);
   if (window.location.hash === nextHash) {
     document.getElementById(fragmentId)?.scrollIntoView({
-      behavior: "smooth",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
       block: "start",
     });
     onNavigate(nextHash);
@@ -1777,8 +1778,21 @@ function toFragmentId(value: string): string {
 
 function revealFragment(fragmentId: string): void {
   const target = document.getElementById(fragmentId);
+  const topbar = target?.closest(".workspace-shell")?.querySelector(".workspace-topbar");
+  if (target && topbar) target.style.scrollMarginTop = `${topbar.getBoundingClientRect().height + 16}px`;
   for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
     if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
   }
   target?.scrollIntoView?.({ block: "start" });
+}
+
+function focusFragment(fragmentId: string): void {
+  window.requestAnimationFrame(() => {
+    revealFragment(fragmentId);
+    const target = document.getElementById(fragmentId);
+    if (target) {
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  });
 }

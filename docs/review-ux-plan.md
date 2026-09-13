@@ -179,6 +179,28 @@ See [platform integration](platform-deployment.md) for generic workload, secret,
 ingress, and migration requirements. It is not a validated private-platform
 installer or a claim of production readiness.
 
+### Header navigation and authenticated comments — 2026-09-14
+
+Home and the NotebookLens name now link to repository selection. Account/team
+settings are in the header menu; review jumps are beside Changes/Discussions;
+Switch push sits beside Push details and remains available from Discussions.
+The lower notebook has no utility/settings rail. Dropdowns use native disclosures,
+Escape/outside dismissal, correct overlay stacking, selected-push semantics,
+and keyboard focus at jump destinations below the sticky header.
+
+The real-Next regression now requires a synthetic session cookie on both review
+GET and comment POST. This exposed a second, distinct comment bug: mutable Next
+cookie stores have no `.size`, so the API helper silently omitted the session on
+POST. The helper now serializes `getAll()` as request-cookie pairs; it does not
+forward Set-Cookie attributes or weaken API authentication. The enhanced regression
+failed before that fix and passed afterward, preserving unrelated drafts.
+
+Verification: 240 backend tests, 162 frontend tests, and 90 standard browser
+cases passed; 12 opt-in cases were skipped by the standard run. The authenticated
+real-Next Chromium case passed separately with a synthetic API, not live GitHub.
+Navigation screenshots and interactions cover 1440×900, 1280×900, and 390×900
+across Chromium, Firefox, and WebKit. Actual user-session acceptance is separate.
+
 ## Release gates
 
 Fresh verification and anti-pattern/code-quality review before commits/push.

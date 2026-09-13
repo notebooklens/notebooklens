@@ -30,6 +30,11 @@ if (window.location.search.includes("moved")) {
   row.outputs = { changed: false, items: [] };
 }
 const workspace = buildWorkspace(row);
+if (window.location.search.includes("history")) {
+  workspace.review.snapshot_history.unshift({ ...workspace.review.snapshot_history[0], id: "snapshot-1", snapshot_index: 1, is_latest: false });
+  workspace.review.selected_snapshot_index = 1;
+  workspace.snapshot!.snapshot_index = 1;
+}
 if (window.location.search.includes("added")) workspace.snapshot!.payload.review.notebooks[0].change_type = "added";
 if (window.location.search.includes("deleted")) workspace.snapshot!.payload.review.notebooks[0].change_type = "deleted";
 if (window.location.search.includes("markdown")) {

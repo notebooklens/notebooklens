@@ -8,6 +8,10 @@ Before changing UI code, styles, layout, or interactions, read
   defaults. No ad hoc per-file styling, pill-card chrome, or unexplained exceptions.
 - Prioritize notebook code/results and contextual discussions. No metadata review
   panels; retain existing conversations without hiding or fabricating anchors.
+- Keep Home visible in workspace navigation, team/account settings in the header,
+  and the push selector beside push details. Do not move essential navigation
+  below the notebook. Menus must support Escape, outside dismissal, visible focus
+  at jump destinations, and targets unobscured by sticky headers.
 - Preserve drafts across blocks/views and errors; keep cell labels consistently
   one-based. Do not let moved cells disappear under unchanged-source filtering.
 - Use semantic keyboard-operable controls and verify contrast, focus, zoom/reflow,
@@ -20,3 +24,6 @@ Before changing UI code, styles, layout, or interactions, read
   and disabled states, draft continuity, and console/runtime errors.
 - Preserve authentication, CSP, sandboxing, and private data boundaries. Use
   synthetic fixtures. Document remaining debt and any deliberate guideline exception.
+- Test authenticated GET and POST with the actual Next runtime, not only mocked
+  headers. Mutable cookie stores can differ from readonly page stores: use
+  `getAll()` and request-cookie serialization, not `.size` or Set-Cookie strings.

@@ -25,7 +25,10 @@ export function AiGatewaySettings({ review, config, currentPath }: AiGatewaySett
           <h1>AI review settings</h1>
           <p>Optional LiteLLM gateway for managed notebook reviews. Notebook diffs do not require AI.</p>
         </div>
-        <Link className={styles.secondaryButton} href={reviewHref}>Back to review</Link>
+        <nav className={styles.headerLinks} aria-label="Workspace navigation">
+          <Link className={styles.secondaryButton} href="/">Home</Link>
+          <Link className={styles.secondaryButton} href={reviewHref}>Back to review</Link>
+        </nav>
       </header>
       <main id="ai-settings-main" className={styles.main} tabIndex={-1}>
         <div className={styles.scopeNote}>

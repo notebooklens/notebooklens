@@ -27,6 +27,63 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); });
 
+for (const width of [1440, 1280, 390]) {
+  test(`header navigation and push controls stay usable at ${width}px`, async ({ page }, info) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${origin}?history`);
+    const topbar = page.getByRole("navigation", { name: "Workspace navigation" });
+    await expect(topbar.getByRole("link", { name: "Home", exact: true })).toHaveAttribute("href", "/");
+    await expect(topbar.getByRole("link", { name: "NotebookLens", exact: true })).toHaveAttribute("href", "/");
+    await expect(page.locator(".workspace-sidebar, .workspace-utility-card")).toHaveCount(0);
+    const settings = topbar.locator("summary");
+    await settings.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("link", { name: "Open team AI settings" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`settings-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeFocused();
+    await expect(page.getByRole("link", { name: "Open team AI settings" })).toBeHidden();
+    const controls = page.locator(".snapshot-controls");
+    const details = controls.locator("summary").filter({ hasText: "Push details" });
+    const history = controls.locator("summary").filter({ hasText: "Switch push" });
+    expect((await details.boundingBox())!.y).toBe((await history.boundingBox())!.y);
+    await history.click();
+    const historyNav = page.getByRole("navigation", { name: "Push history" });
+    await expect(historyNav.getByRole("link", { name: /^Push 1/ })).toHaveAttribute("aria-current", "page");
+    await expect(historyNav.getByRole("link", { name: /^Latest push/ })).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
+    await historyNav.getByRole("link", { name: /^Latest push/ }).click({ trial: true });
+    await page.screenshot({ path: info.outputPath(`pushes-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await details.click();
+    await expect(historyNav).toBeHidden();
+    await expect(page.getByText("Compared against", { exact: true })).toBeVisible();
+    await page.getByRole("heading", { level: 1 }).click();
+    await expect(page.getByText("Compared against", { exact: true })).toBeHidden();
+    await page.getByRole("button", { name: "Add comment on Cell 2 code", exact: true }).click();
+    await page.getByRole("textbox", { name: "New discussion comment" }).fill("Keep this draft while navigating");
+    await page.getByRole("button", { name: "Discussions (1)", exact: true }).click();
+    await expect(history).toBeVisible();
+    const navigate = page.locator(".review-toolbar summary");
+    await navigate.click();
+    await page.getByRole("button", { name: /Next changed output/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-review-changes]")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "New discussion comment" })).toHaveValue("Keep this draft while navigating");
+    await expect(page.locator(".review-toolbar .workspace-menu")).not.toHaveAttribute("open");
+    await expect(page.locator(".diff-block:focus")).toBeVisible();
+    const focusedTarget = (await page.locator(".diff-block:focus").boundingBox())!;
+    const headerBox = (await topbar.boundingBox())!;
+    expect(focusedTarget.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
+    await page.screenshot({ path: info.outputPath(`navigation-${width}.png`), fullPage: true });
+    await topbar.getByRole("link", { name: "Home", exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/`);
+    expect(errors).toEqual([]);
+  });
+}
+
 test("modified notebook aligns changes and keeps discussions contextual", async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto(origin);
