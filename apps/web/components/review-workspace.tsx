@@ -13,6 +13,7 @@ import { buildSandboxedHtmlDocument } from "@/lib/html-output";
 import { InteractiveOutputFrame } from "@/components/interactive-output-frame";
 import { ThreadMutationForm } from "@/components/thread-mutation-form";
 import { WorkspaceTopbar } from "@/components/workspace-topbar";
+import { WorkspaceSettingsMenu } from "@/components/workspace-settings-menu";
 import {
   buildAnchorKey,
   buildAiGatewayRoute,
@@ -95,7 +96,6 @@ export function ReviewWorkspace({
         ? "Reviewing latest push"
         : `Reviewing push ${snapshot.snapshot_index}`;
   const reviewStatusLabel = formatReviewStatusLabel(workspace.review.status);
-  const installationLabel = `${workspace.review.installation.account_login} (${workspace.review.installation.account_type})`;
 
   useEffect(() => {
     setOpenComposerKey(null);
@@ -127,20 +127,7 @@ export function ReviewWorkspace({
       }
     }}>
       <WorkspaceTopbar skipHref={activeView === "changes" ? "#review-changes" : "#review-discussions"}>
-        <WorkspaceMenu label={<><span aria-hidden="true">☰</span> Settings</>} align="end">
-          <h2>Sign-in &amp; team settings</h2>
-          <p className="muted-copy">{installationLabel}</p>
-          <div className="workspace-settings-actions">
-            <Link className="text-link" href={buildAiGatewayRoute(workspace.review.owner, workspace.review.repo, workspace.review.pull_number) as Route}>
-              Open team AI settings
-            </Link>
-            <a className="text-link" href={buildLoginHref(currentPath)}>Refresh GitHub access</a>
-            <form action={buildWorkspaceActionPath("logout")} method="post">
-              <input name="returnTo" type="hidden" value="/" />
-              <button className="secondary-button" type="submit">Sign out</button>
-            </form>
-          </div>
-        </WorkspaceMenu>
+        <WorkspaceSettingsMenu authState="authenticated" returnTo="/" loginHref={buildLoginHref(currentPath)} aiSettingsHref={buildAiGatewayRoute(workspace.review.owner, workspace.review.repo, workspace.review.pull_number)} />
       </WorkspaceTopbar>
       <header className="summary-card workspace-pr-strip">
         <div className="workspace-pr-strip-main">
@@ -564,29 +551,21 @@ function CellRowCard({
               id={buildBlockSectionId(anchor)}
               key={blockKind}
             >
-              <div className="diff-block-head">
-                <h4>{blockLabel}</h4>
-                <div className="diff-block-meta">
-                  {threads.length ? (
-                    <StatusPill label={`${threads.length} thread${threads.length === 1 ? "" : "s"}`} tone="default" />
-                  ) : null}
-                  {threadable ? (
-                    <button
-                      aria-label={`Add comment on ${formatCellLabel(row)} ${blockLabel.toLowerCase()}`}
-                      aria-controls={composerId}
-                      aria-expanded={composerOpen}
-                      className={`${composerOpen ? "secondary-button" : "ghost-button"} thread-affordance-button`}
-                      onClick={() => onToggleComposer(composerKey)}
-                      type="button"
-                    >
-                      {composerOpen ? "−" : "+"}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
+              <h4 className="sr-only">{blockLabel}</h4>
+              {threadable ? (
+                <button
+                  aria-label={`Add comment on ${formatCellLabel(row)} ${blockLabel.toLowerCase()}`}
+                  aria-controls={composerId}
+                  aria-expanded={composerOpen}
+                  className={`${composerOpen ? "secondary-button" : "ghost-button"} thread-affordance-button`}
+                  onClick={() => onToggleComposer(composerKey)}
+                  type="button"
+                >
+                  {composerOpen ? "−" : "+"}
+                </button>
+              ) : null}
               <BlockContent blockKind={blockKind} row={row} />
-
+              {threads.length ? <span className="block-thread-count">{threads.length} thread{threads.length === 1 ? "" : "s"}</span> : null}
               <ThreadColumn
                 anchor={anchor}
                 composerId={composerId}
@@ -660,11 +639,11 @@ function BlockContent({
       <>{!showOutputs ? <p className="muted-copy">Outputs hidden. Enable Show outputs to inspect them; discussions remain below.</p> : null}<div hidden={!showOutputs} className="output-comparison">
         {outputItems.some((item) => item.side) ? <div className={`output-side-grid${showPrevious ? "" : " output-current-only"}`}>{(["base", "head"] as const).map((side) => (
           <section hidden={side === "base" && !showPrevious} className="output-side" key={side} aria-label={`${side === "base" ? "Before" : "After"} outputs`}>
-            <h5>{side === "base" ? "Before" : "After"}</h5>
+            <h5 className="sr-only">{side === "base" ? "Before" : "After"}</h5>
             {outputItems.filter((item) => item.side === side).length ? outputItems.filter((item) => item.side === side).map((item, index) => <OutputItemCard item={item} key={`${item.kind}-${index}`} />) : <p className="muted-copy">No saved output on this side.</p>}
           </section>
         ))}</div> : null}
-        {outputItems.some((item) => !item.side) ? <section className="output-list" aria-label="Outputs without comparison side"><h5>Saved outputs · comparison side unavailable</h5>{outputItems.filter((item) => !item.side).map((item, index) => <OutputItemCard item={item} key={`${item.kind}-${index}`} />)}</section> : null}
+        {outputItems.some((item) => !item.side) ? <section className="output-list" aria-label="Outputs without comparison side"><h5 className="sr-only">Saved outputs · comparison side unavailable</h5>{outputItems.filter((item) => !item.side).map((item, index) => <OutputItemCard item={item} key={`${item.kind}-${index}`} />)}</section> : null}
       </div></>
     );
   }
@@ -708,9 +687,9 @@ function OutputItemCard({ item }: { item: RenderOutputItem }) {
 
 function OutputSideBadge({ side }: { side?: "base" | "head" }) {
   if (!side) {
-    return null;
+    return <span className="output-side-label">Comparison side unavailable</span>;
   }
-  return <StatusPill label={side === "base" ? "Base" : "Head"} tone="default" />;
+  return <span className="output-side-label">{side === "base" ? "Before" : "After"}</span>;
 }
 
 

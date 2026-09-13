@@ -16,7 +16,7 @@ export function AiGatewaySettings({ review, config, currentPath }: AiGatewaySett
   const installationLabel = `${review.installation.account_login} (${review.installation.account_type})`;
 
   return (
-    <AiSettingsShell context={`${review.owner}/${review.repo}`} reviewHref={reviewHref}>
+    <AiSettingsShell context={`${review.owner}/${review.repo}`} reviewHref={reviewHref} currentPath={currentPath} authState="authenticated">
         <div className={styles.scopeNote}>
           <strong>Applies to {installationLabel}</strong>
           <p>Shared by all repositories and pull requests in this GitHub App installation.</p>

@@ -92,11 +92,12 @@ export async function getAiGatewaySettings(
 export async function postApi(
   path: string,
   body?: unknown,
+  requestCookieHeader?: string,
 ): Promise<void> {
   await apiRequest(path, {
     method: "POST",
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, requestCookieHeader);
 }
 
 
@@ -144,12 +145,14 @@ export async function postLogout(): Promise<void> {
 async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
+  requestCookieHeader?: string,
 ): Promise<T> {
-  const cookieStore = await cookies();
   // Route handlers expose Next's mutable ResponseCookies adapter, which has no
   // `.size` and whose toString() uses Set-Cookie syntax. Serialize only request
   // name/value pairs through the API shared by both mutable and readonly stores.
-  const forwardedCookies = cookieStore.getAll()
+  // Route handlers already own a NextRequest. An explicitly empty header means
+  // unauthenticated; never substitute ambient request state in that case.
+  const forwardedCookies = requestCookieHeader ?? (await cookies()).getAll()
     .map(({ name, value }) => `${name}=${encodeURIComponent(value)}`)
     .join("; ");
   const response = await fetch(new URL(path, getApiBaseUrl()), {

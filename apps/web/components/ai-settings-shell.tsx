@@ -2,20 +2,25 @@ import Link from "next/link";
 import type { Route } from "next";
 import type { ReactNode } from "react";
 import { WorkspaceTopbar } from "./workspace-topbar";
+import { WorkspaceSettingsMenu } from "./workspace-settings-menu";
 import styles from "./ai-gateway-settings.module.css";
 
-export function AiSettingsShell({ context, reviewHref, children }: {
+export function AiSettingsShell({ context, reviewHref, children, authState = "unknown", loginHref, currentPath }: {
   context: string;
   reviewHref: string;
   children: ReactNode;
+  authState?: "authenticated" | "signed-out" | "unknown";
+  loginHref?: string;
+  currentPath?: string;
 }) {
   return (
     <div className={styles.page}>
       <WorkspaceTopbar skipHref="#ai-settings-main">
-        <Link className="workspace-topbar-action" href={reviewHref as Route}>Back to review</Link>
+        <WorkspaceSettingsMenu authState={authState} loginHref={loginHref} returnTo={currentPath ?? reviewHref} aiSettingsHref={currentPath} />
       </WorkspaceTopbar>
       <header className={styles.header}>
         <div>
+          <p><Link href={reviewHref as Route}>Back to review</Link></p>
           <p className={styles.breadcrumb}>{context}</p>
           <h1>AI review settings</h1>
           <p>Optional LiteLLM gateway for managed notebook reviews. Notebook diffs do not require AI.</p>
@@ -54,7 +59,7 @@ export function AiSettingsRecovery({ kind, context, reviewHref, currentPath, log
     },
   }[kind];
   return (
-    <AiSettingsShell context={context} reviewHref={reviewHref}>
+    <AiSettingsShell context={context} reviewHref={reviewHref} currentPath={currentPath} authState={kind === "unauthenticated" ? "signed-out" : "unknown"} loginHref={loginHref || undefined}>
       <section className={styles.section} aria-labelledby="ai-settings-recovery-title">
         <h2 id="ai-settings-recovery-title">{content.title}</h2>
         <p>{content.detail}</p>

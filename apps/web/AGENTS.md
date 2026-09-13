@@ -15,11 +15,19 @@ Before changing UI code, styles, layout, or interactions, read
 - Reuse `WorkspaceTopbar` for home, review, settings, and recovery/not-found
   surfaces. Keep brand/Home typography, header outer width, padding, and control
   styles identical; put page-specific review controls below the shared bar.
-  Readable form bodies may be narrower than notebook diffs. Test computed header
-  geometry across these pages at the same viewports, including 1920 px as well as
+  Readable form bodies may be narrower than notebook diffs.
+  Use `WorkspaceSettingsMenu` on every shared bar; show sign-out only for verified
+  authentication and team AI settings only with a known review-context route.
+  Unknown access is not a confirmed logout. Keep the opaque header background
+  consistent with the page in both themes; retain visible Home on error pages.
+  Test computed header geometry across these pages at the same viewports, including 1920 px as well as
   1440, 1280, and 390 px, so max-width differences do not hide in smaller tests.
 - Preserve drafts across blocks/views and errors; keep cell labels consistently
   one-based. Do not let moved cells disappear under unchanged-source filtering.
+- Align each comment gutter button with the actual source pane or output card,
+  not a separate caption row. Preserve accessible block labels and visible
+  output provenance. Test button-to-content geometry for mixed Markdown, code,
+  and outputs at the required widths in both light and dark themes.
 - Use semantic keyboard-operable controls and verify contrast, focus, zoom/reflow,
   target sizes, status announcements, and light/dark/reduced-motion behavior.
   Requirements are targets; do not claim current accessibility certification.
@@ -38,3 +46,7 @@ Before changing UI code, styles, layout, or interactions, read
 - Test authenticated GET and POST with the actual Next runtime, not only mocked
   headers. Mutable cookie stores can differ from readonly page stores: use
   `getAll()` and request-cookie serialization, not `.size` or Set-Cookie strings.
+  Thread route handlers must forward cookies from their actual `NextRequest`,
+  not ambient `cookies()` request state. Pass an explicitly empty header for
+  anonymous requests; never substitute another session or accept cookies from
+  form/query fields. Preserve backend authentication and test all four actions.

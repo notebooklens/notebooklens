@@ -52,6 +52,13 @@ test("review recovery keeps context visible and shares AI header geometry", asyn
       expect(aiBox!.x).toBeCloseTo(reviewBox!.x, 0);
       expect(aiBox!.width).toBeCloseTo(reviewBox!.width, 0);
       await expect(page.getByRole("link", { name: "Home", exact: true })).toHaveCSS("font-size", "14px");
+      await expect(page.locator(".workspace-topbar")).toHaveCSS("background-color", colorScheme === "dark" ? "rgb(22, 27, 34)" : "rgb(246, 248, 250)");
+      const settings = page.locator(".workspace-topbar summary");
+      await settings.click();
+      await expect(page.getByRole("button", { name: "Sign out", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Open team AI settings" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeFocused();
       await page.screenshot({ path: info.outputPath(`ai-recovery-${width}-${colorScheme}.png`), fullPage: true });
     }
   }
@@ -98,6 +105,10 @@ test("AI settings preserve save/test boundaries and accessible pending/error fee
   const outbound: string[] = []; page.on("request", (request) => { if (!request.url().startsWith(origin)) outbound.push(new URL(request.url()).origin); });
   await page.setViewportSize({ width: 1440, height: 900 }); await page.goto(origin);
   await expect(page.getByRole("heading", { name: "AI review settings" })).toBeVisible();
+  await page.locator(".workspace-topbar summary").click();
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  await expect(page.locator('form[action="/actions/auth/logout"] input[name="returnTo"]')).toHaveValue("/reviews/example/research/pulls/7/ai");
+  await page.keyboard.press("Escape");
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
   await page.getByLabel("Model name", { exact: true }).fill("new-model");
   await page.getByLabel("Enable the gateway for this installation", { exact: true }).check();
@@ -140,11 +151,11 @@ test("AI settings use shared compact tokens, keyboard access and narrow reflow",
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCSS("background-color", "rgb(13, 17, 23)");
   await page.screenshot({ path: info.outputPath("ai-settings-dark.png"), fullPage: true });
   await page.emulateMedia({ colorScheme: "light" }); await page.goto(origin);
-  await page.locator("details > summary").click();
+  await page.locator("main details > summary").click();
   await page.getByLabel("GitHub API base URL", { exact: true }).fill("");
-  await page.locator("details > summary").click();
+  await page.locator("main details > summary").click();
   await page.getByRole("button", { name: "Save settings", exact: true }).click();
-  await expect(page.locator("details")).toHaveAttribute("open", "");
+  await expect(page.locator("main details")).toHaveAttribute("open", "");
   await expect(page.getByLabel("GitHub API base URL", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => (window as unknown as { __aiAuditIntents?: string[] }).__aiAuditIntents ?? [])).toEqual([]);
   await page.goto(origin);

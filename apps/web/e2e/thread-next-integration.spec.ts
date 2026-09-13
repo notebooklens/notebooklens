@@ -20,6 +20,7 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
   let serverOutput = "";
   const runtimeErrors: string[] = [];
   const outbound: string[] = [];
+  const apiRequests: string[] = [];
   const row = buildRow({ source: { base: "print(1)", head: "print(2)", changed: true }, outputs: { changed: true, items: [
     { kind: "placeholder", side: "head", output_type: "stream", mime_group: "text", summary: "2", change_type: "modified", truncated: false },
   ] } });
@@ -37,6 +38,8 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     }
     await symlink(path.join(root, "node_modules"), path.join(temporary, "node_modules"), "dir");
     api = createServer((request, response) => { void (async () => {
+      apiRequests.push(`${request.method} ${request.url}`);
+      if (apiRequests.length > 100) apiRequests.shift();
       response.setHeader("Content-Type", "application/json");
       if (request.url?.startsWith("/api/reviews/") && request.headers.cookie !== `notebooklens_session=${syntheticSession}`) {
         response.writeHead(401).end(JSON.stringify({ detail: "Authentication required" }));
@@ -76,6 +79,7 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     if (!nextAddress || typeof nextAddress === "string") throw new Error("Missing Next port");
     await new Promise<void>(resolve => portProbe.close(() => resolve()));
     const origin = `http://127.0.0.1:${nextAddress.port}`;
+    console.info("Synthetic ports", { api: address.port, next: nextAddress.port });
     next = spawn(process.execPath, [path.join(root, "node_modules/next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", String(nextAddress.port)], {
       cwd: temporary,
       env: { PATH: process.env.PATH, NODE_ENV: "development", NEXT_TELEMETRY_DISABLED: "1", APP_BASE_URL: `http://127.0.0.1:${address.port}` },
@@ -146,6 +150,10 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     expect(new URL(page.url()).origin).toBe(origin);
     expect(runtimeErrors).toEqual([]);
     expect(outbound).toEqual([]);
+  } catch (error) {
+    console.info("Synthetic Next failure diagnostics", { reads, creates, authenticatedCreates, authenticatedResolves, runtimeErrors, outbound, apiRequests });
+    console.info(serverOutput.replaceAll(root, "<source>").replaceAll(temporary, "<temporary>"));
+    throw error;
   } finally {
     if (next && next.exitCode === null) {
       const exited = new Promise<void>(resolve => next!.once("exit", () => resolve()));

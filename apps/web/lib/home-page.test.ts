@@ -25,6 +25,9 @@ describe("session-aware homepage", () => {
     expect(html).toContain('href="/api/auth/github/login?next_path=%2F"');
     expect(html).not.toContain("Illustration only");
     expect(getRepositories).not.toHaveBeenCalled();
+    expect(html).toContain("Settings</summary>");
+    expect(html).not.toContain("Sign out");
+    expect(html).not.toContain("Open team AI settings");
   });
   it("renders authorized repositories for a verified identity without a login loop", async () => {
     vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
@@ -36,6 +39,8 @@ describe("session-aware homepage", () => {
     expect(html).toContain("Select a repository");
     expect(html).toContain("Next repositories");
     expect(html).not.toContain("Continue with GitHub");
+    expect(html).toContain("Sign out");
+    expect(html).not.toContain("Open team AI settings");
   });
   it("keeps the empty authorized list honest and does not invent repositories", async () => {
     vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
@@ -48,6 +53,8 @@ describe("session-aware homepage", () => {
     expect(html).toContain("Could not load your repositories");
     expect(html).not.toContain("Continue with GitHub");
     expect(html).not.toContain("private-marker");
+    expect(html).not.toContain("Sign out");
+    expect(html).toContain("Go to Home to check access");
   });
   it("handles session expiration during the repository request", async () => {
     vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
@@ -55,5 +62,15 @@ describe("session-aware homepage", () => {
     const html = await render();
     expect(html).toContain("Continue with GitHub");
     expect(html).not.toContain("Signed in as");
+  });
+  it("retains verified identity when repository loading fails without rejecting authentication", async () => {
+    vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
+    vi.mocked(getRepositories).mockRejectedValue(new ApiRequestError(502, "private-marker"));
+    const html = await render();
+    expect(html).toContain("Signed in as synthetic-reviewer");
+    expect(html).toContain("Sign out");
+    expect(html).toContain("Could not load your repositories");
+    expect(html).not.toContain("private-marker");
+    expect(html).not.toContain("Open team AI settings");
   });
 });

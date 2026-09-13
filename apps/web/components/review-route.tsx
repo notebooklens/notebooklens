@@ -4,6 +4,7 @@ import { ApiRequestError, buildLoginHref, getReviewWorkspace, getSnapshotWorkspa
 import { readFlashNotice } from "@/lib/review-workspace";
 import { ReviewWorkspace } from "@/components/review-workspace";
 import { WorkspaceTopbar } from "@/components/workspace-topbar";
+import { WorkspaceSettingsMenu } from "@/components/workspace-settings-menu";
 
 type ReviewRouteProps = {
   owner: string;
@@ -41,7 +42,9 @@ export function ReviewRecovery({ owner, repo, pullNumber, snapshotIndex, current
   const heading = kind === "signin" ? "Sign in to open this review"
     : kind === "forbidden" ? "Review access could not be verified" : "This review is temporarily unavailable";
   return <div className="workspace-shell notebook-document-workspace">
-    <WorkspaceTopbar skipHref="#review-recovery" />
+    <WorkspaceTopbar skipHref="#review-recovery">
+      <WorkspaceSettingsMenu authState={kind === "signin" ? "signed-out" : "unknown"} loginHref={loginHref ?? undefined} returnTo={currentPath} />
+    </WorkspaceTopbar>
     <main id="review-recovery" tabIndex={-1} className="summary-card">
       <p className="muted-copy">{context}</p>
       <h1>{heading}</h1>

@@ -437,8 +437,8 @@ describe("review workspace rendering", () => {
     const row = buildRow({ cell_type: "markdown", change_type: "added", source: { base: null, head: "# Findings", changed: true }, outputs: { changed: false, items: [] } });
     const markup = renderWorkspace(row);
     expect(markup).toContain("Add comment on Cell 2 markdown");
-    expect(markup).toContain("<h4>Markdown</h4>");
-    expect(markup).not.toContain("<h4>Code</h4>");
+    expect(markup).toContain('<h4 class="sr-only">Markdown</h4>');
+    expect(markup).not.toContain('<h4 class="sr-only">Code</h4>');
     expect(markup).not.toContain('class="thread-column"');
     expect(markup).toContain('<span class="sr-only">Added cell</span>');
     expect(markup).toContain("markdown-pane-added");
@@ -519,7 +519,7 @@ describe("review workspace rendering", () => {
     expect(markup).not.toContain("PR version");
     expect(markup).not.toContain("Review notes");
     expect(markup).not.toContain("installation-scoped");
-    expect(markup).toContain("Sign-in &amp; team settings");
+    expect(markup).toContain("Account &amp; settings");
     expect(markup).toContain("Open team AI settings");
   });
 

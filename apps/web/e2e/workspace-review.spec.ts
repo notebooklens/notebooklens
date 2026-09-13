@@ -120,16 +120,26 @@ for (const width of [1440, 1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}?mixed-cells`);
     const markdown = page.locator(".cell-card").first();
-    await expect(markdown.getByRole("heading", { name: "Markdown", exact: true })).toBeVisible();
+    await expect(markdown.getByRole("heading", { name: "Markdown", exact: true })).toHaveClass("sr-only");
     await expect(markdown.getByRole("heading", { name: "Code", exact: true })).toHaveCount(0);
     await expect(markdown.getByRole("button", { name: "Add comment on Cell 1 markdown" })).toBeVisible();
     await expect(page.locator(".thread-column")).toHaveCount(0);
     await expect(markdown.locator(".markdown-change-marker")).toHaveText("+");
-    const gutter = await markdown.locator(".thread-affordance-button").boundingBox();
-    const head = await markdown.locator(".diff-block-head").boundingBox();
-    expect(Math.abs(gutter!.y - head!.y)).toBeLessThanOrEqual(1);
+    const assertContentAlignment = async () => {
+      for (const block of await page.locator(".diff-block").all()) {
+        const gutter = await block.locator(".thread-affordance-button").boundingBox();
+        const content = await block.locator(".code-pane, .output-card").first().boundingBox();
+        expect(Math.abs(gutter!.y - content!.y)).toBeLessThanOrEqual(2);
+        expect(gutter!.width).toBeGreaterThanOrEqual(24);
+        expect(gutter!.height).toBeGreaterThanOrEqual(24);
+      }
+      const background = await page.locator("body").evaluate(node => getComputedStyle(node).backgroundColor);
+      await expect(page.locator(".workspace-topbar")).toHaveCSS("background-color", background);
+    };
+    await assertContentAlignment();
     await page.screenshot({ path: info.outputPath(`mixed-cells-${width}-light.png`), fullPage: true });
     await page.emulateMedia({ colorScheme: "dark" });
+    await assertContentAlignment();
     const affordance = markdown.getByRole("button", { name: "Add comment on Cell 1 markdown" });
     await expect(affordance).toBeEnabled();
     const colors = await affordance.evaluate((node) => {

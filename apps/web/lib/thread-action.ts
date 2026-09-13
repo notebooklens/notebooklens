@@ -20,6 +20,9 @@ export async function handleThreadAction(request: NextRequest, action: ThreadAct
   const wantsJson = request.headers.get("accept")?.includes("application/json") ?? false;
   let returnTo = "/";
   try {
+    const requestCookieHeader = request.cookies.getAll()
+      .map(({ name, value }) => `${name}=${encodeURIComponent(value)}`)
+      .join("; ");
     let data: FormData;
     try {
       data = await request.formData();
@@ -41,12 +44,13 @@ export async function handleThreadAction(request: NextRequest, action: ThreadAct
         snapshot_id: snapshotId,
         anchor,
         body_markdown: bodyMarkdown,
-      });
+      }, requestCookieHeader);
     } else {
       const threadId = encodeURIComponent(requiredField(data, "threadId"));
       await postApi(
         `/api/threads/${threadId}/${action === "reply" ? "messages" : action}`,
         action === "reply" ? { body_markdown: requiredField(data, "bodyMarkdown") } : undefined,
+        requestCookieHeader,
       );
     }
     const message = successMessages[action];

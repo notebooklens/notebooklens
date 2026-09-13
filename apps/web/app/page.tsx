@@ -2,6 +2,7 @@ import { ApiRequestError, getRepositories, getSessionIdentity } from "@/lib/api"
 import { buildLoginHref } from "@/lib/public-hrefs";
 import { RepositoryPicker } from "@/components/repository-picker";
 import { WorkspaceTopbar } from "@/components/workspace-topbar";
+import { WorkspaceSettingsMenu } from "@/components/workspace-settings-menu";
 import styles from "@/components/repository-picker.module.css";
 import { readFlashNotice } from "@/lib/review-workspace";
 
@@ -11,20 +12,25 @@ export default async function HomePage({ searchParams }: PageProps) {
   const params = await searchParams;
   const notice = readFlashNotice(params);
   let login: string | null = null;
+  let authState: "authenticated" | "signed-out" | "unknown" = "unknown";
+  let loginHref: string | undefined;
   let content;
   try {
     const session = await getSessionIdentity();
     login = session.user.login;
+    authState = "authenticated";
     const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
     const repositories = await getRepositories(cursor);
     content = <RepositoryPicker page={repositories} />;
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 401) {
       login = null;
+      authState = "signed-out";
+      loginHref = buildLoginHref("/");
       content = <section className={styles.entry}>
         <h2>Review your notebooks</h2>
         <p>Sign in to choose a repository and open its notebook pull request reviews.</p>
-        <a className={styles.signIn} href={buildLoginHref("/")}>Continue with GitHub</a>
+        <a className={styles.signIn} href={loginHref}>Continue with GitHub</a>
         <p className={styles.caption}>Need to connect a repository? <a href="https://notebooklens.github.io/notebooklens/quickstart-workspace/">Workspace setup guide</a></p>
       </section>;
     } else {
@@ -38,10 +44,7 @@ export default async function HomePage({ searchParams }: PageProps) {
   }
   return <div className={styles.page}>
     <WorkspaceTopbar skipHref="#repository-content">
-      {login ? <div className={styles.identity}>
-        <span>Signed in as {login}</span>
-        <form action="/actions/auth/logout" method="post"><input type="hidden" name="returnTo" value="/" /><button className="workspace-topbar-action" type="submit">Sign out</button></form>
-      </div> : null}
+      <WorkspaceSettingsMenu authState={authState} login={login ?? undefined} loginHref={loginHref} returnTo="/" />
     </WorkspaceTopbar>
     <main id="repository-content" tabIndex={-1}>
     <h1 className="sr-only">Notebook reviews</h1>

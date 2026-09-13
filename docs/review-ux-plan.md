@@ -283,6 +283,43 @@ WebKit at 1440, 1280, and 390 pixels, with measured text contrast at least 4.5:1
 immediately after switching themes. No full accessibility, two-way GitHub synchronization,
 or ReviewNB replacement acceptance is inferred from these checks.
 
+### Content-aligned controls and shared settings — 2026-09-14
+
+Comment controls now sit beside actual source/output content rather than a
+separate block-heading row. Before/After labels remain in output cards, and
+legacy outputs retain a visible comparison-side-unavailable notice. The shared
+topbar uses the surrounding page background; Home, review, AI settings, and
+recovery pages share one keyboard-operable Settings disclosure. Account actions
+reflect verified authentication, unknown access remains explicit, and pages
+without review context do not invent team-AI links. Existing logout redirect
+sanitization and permission checks are unchanged.
+
+Verification before the request-cookie fix: 185 frontend unit tests, typecheck, lint, production build, and
+the web Docker image build passed. The first standard three-browser run passed
+125 cases, skipped 12 opt-in cases, and failed seven: six outdated selectors
+after moving Settings actions, and one saved-widget timeout. After correcting
+the selectors, all 24 focused AI/Home cases passed across the three browsers;
+the exact widget timeout case passed on retry. This is not a claim that the
+entire standard suite was rerun successfully. Nine focused mixed-cell cases
+also passed across the three browsers, and an independent reviewer reran 49
+route/Home/AI/render unit cases successfully. The isolated actual-Next test
+intermittently failed with a 502 before the synthetic API received a comment
+POST. Initial retries and three baseline runs passed, but candidate failures
+recurred. Isolated diagnostics identified `cookies()` being called outside its
+request scope in the POST action. Thread handlers now forward cookies directly
+from their actual `NextRequest`; an explicitly empty cookie header remains
+anonymous and never falls back to ambient request state. Independent verification
+passed 38 API/action/actual-route tests, including all four thread actions and
+the API's anonymous 401 response. After this fix, 190 frontend unit tests and
+typecheck passed; three consecutive isolated actual-Next cases passed in 18.8
+seconds. These cases use a synthetic authenticated API, not real GitHub writes.
+Earlier successful retries are not counted as post-fix evidence. Final post-fix
+lint, production build, and web Docker image build passed.
+Twelve focused thread-action browser cases also passed across the three browsers.
+Backend code,
+schema, and dependencies are unchanged;
+the earlier 269-test backend evidence was not rerun for this frontend-only slice.
+
 ## Release gates
 
 Fresh verification and anti-pattern/code-quality review before commits/push.

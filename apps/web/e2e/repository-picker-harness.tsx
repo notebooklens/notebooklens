@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { RepositoryPicker } from "../components/repository-picker";
 import { WorkspaceTopbar } from "../components/workspace-topbar";
+import { WorkspaceSettingsMenu } from "../components/workspace-settings-menu";
 import styles from "../components/repository-picker.module.css";
 import type { RepositoryPage } from "../lib/types";
 
@@ -17,7 +18,7 @@ if (new URLSearchParams(location.search).has("empty")) {
   page.next_cursor = null;
 }
 createRoot(document.getElementById("root")!).render(<div className={styles.page}>
-  <WorkspaceTopbar skipHref="#repository-content" />
+  <WorkspaceTopbar skipHref="#repository-content"><WorkspaceSettingsMenu authState={location.search.includes("signed-out") ? "signed-out" : "authenticated"} login={location.search.includes("signed-out") ? undefined : "synthetic-reviewer"} loginHref={location.search.includes("signed-out") ? "/api/auth/github/login" : undefined} returnTo="/" /></WorkspaceTopbar>
   <main id="repository-content" tabIndex={-1}>
   {new URLSearchParams(location.search).has("signed-out") ? <section className={styles.entry}><h2>Review your notebooks</h2><a className={styles.signIn} href="/api/auth/github/login">Continue with GitHub</a></section> : <RepositoryPicker page={page} />}
 </main></div>);

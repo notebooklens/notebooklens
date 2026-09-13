@@ -33,7 +33,7 @@ describe("thread action route boundary", () => {
     ["reopen", reopen, "/api/threads/thread-id/reopen", undefined],
   ] as const)("submits %s to the API and returns a safe relative destination", async (_, handler, path, body) => {
     const response = await handler(request());
-    expect(postApi).toHaveBeenCalledWith(path, body);
+    expect(postApi).toHaveBeenCalledWith(path, body, "");
     expect(response.status).toBe(200);
     const data = await response.json() as { ok: boolean; redirectTo: string };
     expect(data.ok).toBe(true);
