@@ -23,6 +23,31 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
 
+test("shared dark tokens preserve readable picker fields, links and sign-in action", async ({ page }, info) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin);
+  await expect(page.getByRole("main")).toHaveCSS("color", "rgb(240, 246, 252)");
+  await expect(page.getByRole("searchbox")).toHaveCSS("background-color", "rgb(13, 17, 23)");
+  await expect(page.getByRole("searchbox")).toHaveCSS("color", "rgb(240, 246, 252)");
+  await expect(page.getByRole("button", { name: "example/forecast 1 recent review" })).toHaveCSS("color", "rgb(240, 246, 252)");
+  await page.screenshot({ path: info.outputPath("repository-picker-dark.png"), fullPage: true });
+  await page.goto(`${origin}?signed-out`);
+  const signIn = page.getByRole("link", { name: "Continue with GitHub" });
+  await expect(signIn).toHaveCSS("background-color", "rgb(88, 166, 255)");
+  await expect(signIn).toHaveCSS("color", "rgb(13, 17, 23)");
+  const contrast = await signIn.evaluate(node => {
+    const style = getComputedStyle(node);
+    const luminance = (color: string) => (color.match(/\d+/g) ?? []).slice(0, 3).map(Number).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const values = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => a - b);
+    return (values[1] + 0.05) / (values[0] + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
+  console.info(`Dark sign-in text contrast: ${contrast.toFixed(2)}:1`);
+  await page.screenshot({ path: info.outputPath("homepage-sign-in-dark.png"), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 for (const [width, height] of [[1440, 900], [1280, 800], [390, 844]]) {
   test(`repository selection and empty states at ${width}px`, async ({ page, browserName }, info) => {
     const errors: string[] = [];

@@ -575,6 +575,10 @@ def run_snapshot_build_worker_once(
         )
         provider_state = getattr(reviewer, "last_run_state", provider_state)
         snapshot_payload = review_artifacts.snapshot_payload
+        snapshot_payload["head_commit"] = _head_commit_metadata(
+            db_session=db_session, review=review, github_client=github_client,
+            settings=settings, sha=job.head_sha,
+        )
         asset_ids_by_key = _persist_review_assets(
             db_session=db_session,
             snapshot=snapshot,
@@ -1292,6 +1296,53 @@ def _extract_usage_value(usage: Any, *, keys: Sequence[str]) -> int | None:
         if isinstance(value, int) and value >= 0:
             return value
     return None
+
+
+def _head_commit_metadata(
+    *, db_session: Session, review: ManagedReview,
+    github_client: ManagedGitHubClient, settings: ApiSettings, sha: str,
+) -> dict[str, Any]:
+    """Persist optional metadata in existing snapshot JSON, cached per repo/SHA.
+
+    No network calls on workspace GET. Old rows remain readable with no subject;
+    failures never prevent deterministic notebook review. A null result is cached
+    too so repeated rebuilds cannot hammer an unavailable upstream.
+    """
+    cached_snapshots = db_session.execute(
+        select(ReviewSnapshot)
+        .join(ManagedReview, ReviewSnapshot.managed_review_id == ManagedReview.id)
+        .where(
+            ManagedReview.installation_repository_id == review.installation_repository_id,
+            ReviewSnapshot.head_sha == sha,
+            ReviewSnapshot.status == ReviewSnapshotStatus.READY,
+        )
+        .order_by(ReviewSnapshot.created_at.desc())
+        .limit(20)
+    ).scalars()
+    for cached in cached_snapshots:
+        payload = cached.snapshot_payload_json
+        metadata = payload.get("head_commit") if isinstance(payload, dict) else None
+        if isinstance(metadata, dict) and metadata.get("sha") == sha:
+            subject = metadata.get("subject")
+            if subject is None or isinstance(subject, str):
+                bounded_subject = subject.splitlines()[0].strip()[:500] if subject else None
+                return {"sha": sha, "subject": bounded_subject or None}
+    subject = None
+    try:
+        subject = github_client.get_commit_subject(
+            settings=settings,
+            installation_id=review.installation_repository.installation.github_installation_id,
+            repository=review.installation_repository.full_name,
+            sha=sha,
+        )
+    except Exception:
+        # Optional display enrichment only; do not log token/upstream content.
+        pass
+    if not isinstance(subject, str) or not subject.strip():
+        subject = None
+    else:
+        subject = subject.splitlines()[0].strip()[:500] or None
+    return {"sha": sha, "subject": subject}
 
 
 def _create_pending_snapshot(

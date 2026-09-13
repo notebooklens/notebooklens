@@ -48,7 +48,12 @@ export function ThreadMutationForm({ children, pendingLabel = "Posting…", onSu
       setSuccess(result.message ?? "Saved.");
       // Refresh server data without destroying other in-memory comment drafts.
       try {
-        router.replace(result.redirectTo, { scroll: false });
+        // Enhanced forms announce success locally. Keep fallback redirect flashes
+        // for plain HTML submissions, not as a persistent page-wide banner.
+        const destination = new URL(result.redirectTo, window.location.origin);
+        destination.searchParams.delete("flash");
+        destination.searchParams.delete("message");
+        router.replace(`${destination.pathname}${destination.search}${destination.hash}`, { scroll: false });
         router.refresh();
       } catch {
         setError("The action was saved, but the discussion could not refresh. Reload to see it; do not submit it again.");

@@ -36,7 +36,7 @@ test("GitHub-style addition and deletion colors keep signs and neutral gaps", as
   await expect(page.locator(".workspace-title")).toHaveCSS("font-size", "20px");
   await expect(page.locator(".workspace-title")).toHaveCSS("font-weight", "600");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 248, 250)");
-  for (const selector of [".snapshot-controls .workspace-menu > summary", ".review-toolbar .workspace-menu > summary", ".workspace-topbar .workspace-menu > summary"]) {
+  for (const selector of [".review-version-controls .workspace-menu > summary", ".review-toolbar .workspace-menu > summary", ".workspace-topbar .workspace-menu > summary"]) {
     await expect(page.locator(selector).first()).toHaveCSS("border-radius", "6px");
     await expect(page.locator(selector).first()).toHaveCSS("background-color", "rgb(246, 248, 250)");
   }

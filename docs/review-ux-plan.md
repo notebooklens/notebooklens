@@ -201,6 +201,57 @@ real-Next Chromium case passed separately with a synthetic API, not live GitHub.
 Navigation screenshots and interactions cover 1440×900, 1280×900, and 390×900
 across Chromium, Firefox, and WebKit. Actual user-session acceptance is separate.
 
+### Contextual toolbar and truthful discussion state — 2026-09-14
+
+The review header is compact, with version selection and push details in the
+upper controls. Changes has notebook/change navigation and display options;
+Discussions has All/Open/Resolved filtering and contextual notebook jumps instead
+of irrelevant display switches. Details use labeled rows rather than squeezed
+metric cards. Existing notebook/anchor identity and drafts remain intact.
+
+Version history uses actual head-commit subjects for newly prepared snapshots,
+with saved-version time, short SHA, and push identity as secondary information.
+The worker performs bounded authenticated enrichment and caches it in existing
+snapshot JSON by installation repository and SHA. Old snapshots retain an honest
+missing-subject fallback; no database migration or automatic history backfill is
+required. A saved push is not an individual-commit review feature.
+
+The web API boundary now normalizes the backend's nested `github_mirror` contract.
+A shared JSON fixture is verified against the actual Python serializer and used
+by frontend tests. Posted/pending/failed/skipped states and direct links therefore
+use the real payload rather than unrelated flat fixture fields. Resolution is
+explicitly local to NotebookLens: GitHub receives a notice, not native thread
+resolution; GitHub replies are not automatically imported. Neither two-way sync
+nor full ReviewNB parity is claimed.
+
+Discussion rows expose context and cell jumps, resolved conversations remain
+expandable, and successful mutations announce feedback locally rather than
+leaving a permanent page-wide banner. The actual Next runtime regression covers
+resolving from the Open filter when the fragment does not change: focus returns
+to visible review content and unrelated drafts survive refresh. AI settings now
+share their navigation/shell for success, signed-out, forbidden, missing-resource,
+and service-error states; malformed API-origin configuration cannot break the
+recovery page a second time. Permissions and stored secrets are unchanged.
+
+Verified working-tree evidence: 254 backend tests passed on Python 3.12; 178
+frontend unit tests, typecheck, lint, and production build passed. The standard
+browser run passed 99 cases across Chromium, Firefox, and WebKit; 12 opt-in cases
+were skipped and are not counted as passes. The opt-in actual-Next Chromium case
+passed separately with a synthetic authenticated API, not a real GitHub session
+or write. A separate focused picker run passed 12 cases across the three
+browsers, including signed-in dark-theme and signed-out loading/failure states.
+The measured picker text contrast was 7.49:1; this is a scoped measurement, not
+application-wide accessibility certification.
+
+The [API contract inventory](api-contract-verification.md) records all 20
+registered application method/path pairs and their observed statuses, together
+with missing malformed/missing-resource/upstream outcome coverage. Passing the
+suite does not establish that every API failure branch works. Live deployment,
+actual account permission diagnosis, native GitHub resolution/inbound replies,
+cross-version durable drafts, and previously documented rendering/parity gaps
+remain separate acceptance work. No live acceptance is inferred from synthetic
+screenshots or local health checks.
+
 ## Release gates
 
 Fresh verification and anti-pattern/code-quality review before commits/push.

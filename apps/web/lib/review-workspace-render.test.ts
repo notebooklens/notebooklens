@@ -425,11 +425,11 @@ describe("review workspace rendering", () => {
     expect(markup).toContain("Push details");
     expect(markup).toContain('aria-label="Workspace navigation"');
     expect(markup).toMatch(/href="\/"[^>]*>Home<\/a>/);
-    expect(markup).toContain('aria-label="Push controls"');
+    expect(markup).toContain('class="review-version-controls"');
     expect(markup).not.toContain('class="workspace-sidebar"');
     expect(markup).not.toContain('workspace-utility-card');
-    expect(markup).toContain("Jump between notebooks");
-    expect(markup).toContain("2 changed notebooks");
+    expect(markup).toContain('aria-label="Notebook"');
+    expect(markup).toContain("Notebooks (2)");
     expect(markup).toContain("Two notebooks changed in this review version.");
   });
 
@@ -469,13 +469,13 @@ describe("review workspace rendering", () => {
 
     const markup = renderWorkspacePayload(workspace);
 
-    expect(markup).toContain("Review navigation");
-    expect(markup).toContain("Next notebook with open threads");
-    expect(markup).toContain("Next unresolved thread");
-    expect(markup).toContain("Next changed output");
-    expect(markup).toContain("Back to top");
+    expect(markup).not.toContain("Review navigation");
+    expect(markup).not.toContain("Next notebook with open threads");
+    expect(markup).not.toContain("Next unresolved thread");
+    expect(markup).not.toContain("Next changed output");
+    expect(markup).not.toContain("Back to top");
     expect(markup).toContain("Switch push");
-    expect(markup).toContain("Open thread");
+    expect(markup).not.toContain("Open thread");
     expect(markup).not.toContain("Switch PR version");
     expect(markup).not.toContain("PR Versions");
     expect(markup).not.toContain("Where to look first");
@@ -529,9 +529,9 @@ describe("review workspace rendering", () => {
     expect(markup).toContain("Add comment");
     expect(markup).not.toContain('class="thread-column-head"');
     expect(markup).toContain("Please explain why the validation accuracy regressed on this output.");
-    expect(markup).toContain("GitHub: Mirrored to GitHub");
+    expect(markup).toContain("GitHub: Posted");
     expect(markup).toContain("Open mirrored PR thread");
-    expect(markup).toContain('href="#thread-thread-id"');
+    expect(markup).toContain("View in notebook");
     expect(markup).toContain('id="thread-thread-id"');
     expect(markup).toContain('class="thread-card thread-card-flat thread-details"');
     expect(markup).toMatch(/id="thread-thread-id" open=""/);

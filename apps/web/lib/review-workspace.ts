@@ -302,7 +302,7 @@ export function summarizeGitHubMirrorStatus(
 } {
   if (thread.github_mirror_state === "pending") {
     return {
-      label: "GitHub sync pending",
+      label: "Posting pending",
       tone: "accent",
       description:
         "NotebookLens recorded this thread first and is still waiting to mirror it to GitHub.",
@@ -312,10 +312,12 @@ export function summarizeGitHubMirrorStatus(
 
   if (thread.github_mirror_state === "mirrored") {
     return {
-      label: "Mirrored to GitHub",
+      label: "Posted",
       tone: "success",
-      description: thread.github_root_comment_url
-        ? "GitHub reviewers can open the mirrored PR thread directly."
+      description: thread.status === "resolved"
+        ? "Resolved in NotebookLens. GitHub receives a notice; its native conversation is not resolved automatically."
+        : thread.github_root_comment_url
+        ? "Comments are posted to GitHub. Replies made on GitHub are not imported automatically."
         : "GitHub mirror activity exists, but this thread does not expose a direct PR comment link yet.",
       linkLabel: thread.github_root_comment_url ? "Open mirrored PR thread" : null,
     };
@@ -323,7 +325,7 @@ export function summarizeGitHubMirrorStatus(
 
   if (thread.github_mirror_state === "failed") {
     return {
-      label: "GitHub sync failed",
+      label: "Posting failed",
       tone: "danger",
       description:
         "NotebookLens remains the source of truth while GitHub mirroring needs attention.",
@@ -333,7 +335,7 @@ export function summarizeGitHubMirrorStatus(
 
   if (thread.github_mirror_state === "skipped") {
     return {
-      label: "GitHub sync skipped",
+      label: "Posting skipped",
       tone: "warning",
       description:
         "This hosted anchor was not mirrored into a native GitHub PR comment, so continue in NotebookLens.",
@@ -342,7 +344,7 @@ export function summarizeGitHubMirrorStatus(
   }
 
   return {
-    label: "GitHub sync not recorded",
+    label: "Posting status unavailable",
     tone: "default",
     description:
       "Mirror status metadata is not available for this thread yet. NotebookLens remains the canonical discussion surface.",

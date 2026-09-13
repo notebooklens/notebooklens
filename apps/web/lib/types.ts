@@ -156,6 +156,7 @@ export type SnapshotHistoryEntry = {
   head_sha: string;
   created_at: string;
   is_latest: boolean;
+  head_commit_subject?: string | null;
 };
 
 export type WorkspaceReview = {
@@ -244,6 +245,19 @@ export type WorkspacePayload = {
   review: WorkspaceReview;
   snapshot: ReviewSnapshotRecord | null;
   threads: ReviewThread[];
+};
+
+// Wire contract from apps/api/review_workspace.py. Components consume the
+// normalized ReviewThread above; only the API boundary flattens mirror fields.
+export type WorkspaceApiPayload = Omit<WorkspacePayload, "threads"> & {
+  threads: Array<ReviewThread & {
+    github_mirror?: {
+      state: GitHubMirrorState | null;
+      root_comment_id: number | null;
+      root_comment_url: string | null;
+      last_mirrored_at: string | null;
+    } | null;
+  }>;
 };
 
 export type FlashNotice = {

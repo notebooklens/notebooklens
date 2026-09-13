@@ -46,33 +46,34 @@ for (const width of [1440, 1280, 390]) {
     await page.keyboard.press("Escape");
     await expect(settings).toBeFocused();
     await expect(page.getByRole("link", { name: "Open team AI settings" })).toBeHidden();
-    const controls = page.locator(".snapshot-controls");
+    const controls = page.locator(".review-version-controls");
     const details = controls.locator("summary").filter({ hasText: "Push details" });
     const history = controls.locator("summary").filter({ hasText: "Switch push" });
     expect((await details.boundingBox())!.y).toBe((await history.boundingBox())!.y);
     await history.click();
     const historyNav = page.getByRole("navigation", { name: "Push history" });
-    await expect(historyNav.getByRole("link", { name: /^Push 1/ })).toHaveAttribute("aria-current", "page");
-    await expect(historyNav.getByRole("link", { name: /^Latest push/ })).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
-    await historyNav.getByRole("link", { name: /^Latest push/ }).click({ trial: true });
+    await expect(historyNav.getByRole("link", { name: /Push 1/ })).toHaveAttribute("aria-current", "page");
+    await expect(historyNav.getByRole("link", { name: /Push 2 · Latest/ })).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
+    await historyNav.getByRole("link", { name: /Push 2 · Latest/ }).click({ trial: true });
     await page.screenshot({ path: info.outputPath(`pushes-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await details.click();
     await expect(historyNav).toBeHidden();
-    await expect(page.getByText("Compared against", { exact: true })).toBeVisible();
+    await expect(controls.getByText("Base", { exact: true })).toBeVisible();
     await page.getByRole("heading", { level: 1 }).click();
-    await expect(page.getByText("Compared against", { exact: true })).toBeHidden();
+    await expect(controls.getByText("Base", { exact: true })).toBeHidden();
     await page.getByRole("button", { name: "Add comment on Cell 2 code", exact: true }).click();
     await page.getByRole("textbox", { name: "New discussion comment" }).fill("Keep this draft while navigating");
     await page.getByRole("button", { name: "Discussions (1)", exact: true }).click();
     await expect(history).toBeVisible();
-    const navigate = page.locator(".review-toolbar summary");
-    await navigate.click();
-    await page.getByRole("button", { name: /Next changed output/ }).focus();
+    await expect(page.getByRole("button", { name: "Next change", exact: true })).toBeHidden();
+    await page.screenshot({ path: info.outputPath(`discussions-${width}.png`), fullPage: true });
+    await page.getByRole("link", { name: "View in notebook" }).click();
+    await page.getByRole("button", { name: "Next change", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(page.locator("[data-review-changes]")).toBeVisible();
     await expect(page.getByRole("textbox", { name: "New discussion comment" })).toHaveValue("Keep this draft while navigating");
-    await expect(page.locator(".review-toolbar .workspace-menu")).not.toHaveAttribute("open");
+    await expect(page.locator(".review-toolbar .workspace-menu[open]")).toHaveCount(0);
     await expect(page.locator(".diff-block:focus")).toBeVisible();
     const focusedTarget = (await page.locator(".diff-block:focus").boundingBox())!;
     const headerBox = (await topbar.boundingBox())!;
@@ -83,6 +84,52 @@ for (const width of [1440, 1280, 390]) {
     expect(errors).toEqual([]);
   });
 }
+
+test("version subjects fit, discussion filters preserve drafts and dark theme responds", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${origin}?seven-versions`);
+  await page.locator("summary").filter({ hasText: /^Switch push$/ }).click();
+  const history = page.getByRole("navigation", { name: "Push history" });
+  await expect(history.getByRole("link")).toHaveCount(7);
+  await expect(history.getByRole("link").first()).toContainText("Refine notebook analysis 7");
+  await expect(history.getByRole("link").last()).toContainText("Commit subject unavailable");
+  expect(await history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("seven-versions-mobile.png") });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Discussions (1)", exact: true }).click();
+  await expect(page.locator("summary").filter({ hasText: /^View options$/ })).toBeHidden();
+  await page.locator(".discussion-index").getByText("Reply", { exact: true }).click();
+  await page.getByRole("textbox", { name: /^Reply to/ }).fill("Preserve discussion draft");
+  await page.getByRole("button", { name: "Resolved", exact: true }).click();
+  await expect(page.getByText("No resolved discussions on this push.")).toBeVisible();
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: /^Reply to/ })).toHaveValue("Preserve discussion draft");
+  await page.getByRole("link", { name: "View in notebook" }).click();
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await expect(page.locator(".cell-card")).toHaveCSS("background-color", "rgb(13, 17, 23)");
+  await expect(page.locator(".code-diff-line-added").first()).toHaveCSS("background-color", "rgb(18, 46, 28)");
+  await page.screenshot({ path: info.outputPath("review-dark-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 320, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator("body").evaluate(node => { (node as HTMLElement).style.zoom = "2"; });
+  const zoomOverflow = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, elements: Array.from(document.querySelectorAll("body *")).filter(node => node.getBoundingClientRect().right > innerWidth && node.getClientRects().length).slice(0, 8).map(node => ({ name: node.className, right: node.getBoundingClientRect().right })) }));
+  expect(zoomOverflow.scrollWidth, JSON.stringify(zoomOverflow)).toBeLessThanOrEqual(zoomOverflow.width);
+});
+
+test("previous change starts at the last block and unmatched threads link only proven original versions", async ({ page }) => {
+  await page.goto(origin);
+  const blocks = page.locator("[data-review-changes] .diff-block");
+  const lastId = await blocks.last().getAttribute("id");
+  await page.getByRole("button", { name: "Previous change", exact: true }).click();
+  expect(new URL(page.url()).hash).toBe(`#${lastId}`);
+  await page.goto(`${origin}?original-context`);
+  await page.getByRole("button", { name: "Discussions (1)", exact: true }).click();
+  const original = page.locator('.discussion-index a[href*="/snapshots/1"]');
+  await expect(original).toHaveCount(1);
+  await expect(original).toHaveAttribute("href", /\/snapshots\/1$/);
+  await expect(page.locator(".discussion-index").getByRole("link", { name: "View in notebook", exact: true })).toHaveCount(0);
+});
 
 test("modified notebook aligns changes and keeps discussions contextual", async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
@@ -123,6 +170,7 @@ test("modified notebook aligns changes and keeps discussions contextual", async 
   await expect(page.getByRole("textbox", { name: /^Reply to/ })).toHaveValue("Reply draft");
   await page.getByRole("button", { name: "Changes", exact: true }).click();
   await expect(page.frameLocator("iframe.html-output-frame").getByLabel("Saved note")).toHaveValue("Retained frame state");
+  await page.locator("summary").filter({ hasText: /^View options$/ }).click();
   await page.getByLabel("Show previous version", { exact: true }).uncheck();
   await expect(page.locator(".code-diff-line-added")).not.toHaveCount(0);
   await expect(page.frameLocator("iframe.html-output-frame").getByLabel("Saved note")).toHaveValue("Retained frame state");
@@ -156,6 +204,7 @@ test("added cells show one green source version with plus markers", async ({ pag
   await expect(page.locator(".code-diff-line-marker").first()).toHaveText("+");
   await expect(page.getByText("Added cell", { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath("added-notebook.png"), fullPage: true });
+  await page.locator("summary").filter({ hasText: /^View options$/ }).click();
   await page.getByLabel("Show outputs", { exact: true }).uncheck();
   await expect(page.getByText(/Outputs hidden/)).toBeVisible();
 });
@@ -189,6 +238,7 @@ test("deleted cells retain their original source and output with previous versio
   await expect(page.locator(".code-diff-line-marker")).toHaveText("−");
   await expect(page.getByText("Retired saved output", { exact: true })).toBeVisible();
   await expect(page.getByText("After", { exact: true })).toHaveCount(0);
+  await page.locator("summary").filter({ hasText: /^View options$/ }).click();
   await page.getByLabel("Show previous version", { exact: true }).uncheck();
   await expect(page.getByText("Removed cell", { exact: true })).toBeVisible();
   await expect(page.locator(".code-diff-line-content")).toHaveText("retired_metric = 15");

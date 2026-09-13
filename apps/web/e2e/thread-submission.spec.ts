@@ -93,7 +93,9 @@ test("submits restored comment once, keeps other drafts, and returns to its bloc
   expect(api.calls).toHaveLength(1);
   expect(api.calls[0].path).toMatch(/^\/api\/reviews\/.*\/threads$/);
   expect(api.calls[0].body?.body_markdown).toBe("Does this use all observations?");
-  expect(page.url()).toContain(origin + "/reviews/example/notebooks/pulls/7?flash=success");
+  expect(page.url()).toContain(origin + "/reviews/example/notebooks/pulls/7#");
+  expect(new URL(page.url()).searchParams.has("flash")).toBe(false);
+  expect(new URL(page.url()).searchParams.has("message")).toBe(false);
   expect(new URL(page.url()).hash).toMatch(/^#block-/);
   await page.getByRole("button", { name: "Add comment on Cell 2 outputs", exact: true }).click();
   await expect(comment).toHaveValue("Unsubmitted output draft");

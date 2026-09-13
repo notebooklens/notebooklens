@@ -196,6 +196,9 @@ class FakeGitHubAppSession:
 
 
 class FakeManagedGitHubClient:
+    def get_commit_subject(self, **kwargs) -> str | None:
+        return "Update synthetic notebook outputs"
+
     def __init__(
         self,
         *,
@@ -2176,6 +2179,9 @@ def test_snapshot_worker_builds_ready_snapshot_and_updates_check_run(tmp_path: P
         assert snapshot.status == ReviewSnapshotStatus.READY
         assert snapshot.schema_version == 1
         assert snapshot.notebook_count == 1
+        assert snapshot.snapshot_payload_json["head_commit"] == {
+            "sha": "head-sha", "subject": "Update synthetic notebook outputs",
+        }
         assert snapshot.changed_cell_count > 0
         assert snapshot.snapshot_payload_json["review"]["notebooks"][0]["path"] == "analysis/notebook.ipynb"
         assert any(

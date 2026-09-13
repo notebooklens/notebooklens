@@ -16,6 +16,9 @@
 .header, .main { width: 100%; max-width: 1040px; margin: 0 auto; }
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 0 0 24px; }
 .headerLinks { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
+.header > div { min-width: 0; }
+.recoveryActions { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
+.recoveryActions a { white-space: normal !important; }
 .page h1 { margin: 4px 0 8px; font-family: inherit; font-size: var(--ui-heading-size, 20px); font-weight: var(--ui-heading-weight, 600); line-height: 1.5; letter-spacing: normal; }
 .page h2 { margin: 0 0 12px; font-family: inherit; font-size: var(--ui-subheading-size, 16px); font-weight: var(--ui-heading-weight, 600); line-height: 1.5; letter-spacing: normal; }
 .page p { margin: 0 0 12px; }

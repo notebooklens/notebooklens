@@ -17,5 +17,5 @@ if (new URLSearchParams(location.search).has("empty")) {
 }
 createRoot(document.getElementById("root")!).render(<main className={styles.page}>
   <header className={styles.header}><h1>NotebookLens</h1></header>
-  <RepositoryPicker page={page} />
+  {new URLSearchParams(location.search).has("signed-out") ? <section className={styles.entry}><h2>Review your notebooks</h2><a className={styles.signIn} href="/api/auth/github/login">Continue with GitHub</a></section> : <RepositoryPicker page={page} />}
 </main>);

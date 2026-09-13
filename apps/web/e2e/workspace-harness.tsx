@@ -35,6 +35,12 @@ if (window.location.search.includes("history")) {
   workspace.review.selected_snapshot_index = 1;
   workspace.snapshot!.snapshot_index = 1;
 }
+if (window.location.search.includes("seven-versions")) {
+  workspace.review.snapshot_history = Array.from({ length: 7 }, (_, index) => ({ ...workspace.review.snapshot_history[0], id: `snapshot-${index + 1}`, snapshot_index: index + 1, is_latest: index === 6, head_commit_subject: index === 0 ? null : `Refine notebook analysis ${index + 1}: compare weekly observations and preserve the full descriptive commit subject for reviewers` }));
+  workspace.review.selected_snapshot_index = 7;
+  workspace.review.latest_snapshot_index = 7;
+  workspace.snapshot!.snapshot_index = 7;
+}
 if (window.location.search.includes("added")) workspace.snapshot!.payload.review.notebooks[0].change_type = "added";
 if (window.location.search.includes("deleted")) workspace.snapshot!.payload.review.notebooks[0].change_type = "deleted";
 if (window.location.search.includes("markdown")) {
@@ -43,6 +49,11 @@ if (window.location.search.includes("markdown")) {
   for (const anchor of Object.values(row.thread_anchors)) anchor.cell_type = "markdown";
 }
 workspace.threads = [buildThread(row)];
+if (window.location.search.includes("original-context")) {
+  workspace.threads[0].anchor_drifted = true;
+  workspace.threads[0].origin_snapshot_id = "original-snapshot";
+  workspace.review.snapshot_history.unshift({ ...workspace.review.snapshot_history[0], id: "original-snapshot", snapshot_index: 1, is_latest: false });
+}
 if (window.location.search.includes("metadata-only")) {
   row.source.changed = false;
   row.source.head = row.source.base;

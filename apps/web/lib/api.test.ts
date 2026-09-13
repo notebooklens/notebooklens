@@ -12,8 +12,11 @@ import {
   buildApiHref,
   buildLoginHref,
   getReviewWorkspace,
+  getSnapshotWorkspace,
   postApi,
 } from "@/lib/api";
+import serializedThread from "../../../tests/fixtures/serialized_thread.json";
+import { summarizeGitHubMirrorStatus } from "@/lib/review-workspace";
 
 
 describe("api url helpers", () => {
@@ -95,5 +98,43 @@ describe("API request cookie forwarding", () => {
     vi.stubGlobal("fetch", fetchMock);
     await postApi("/api/threads/synthetic/resolve");
     expect((fetchMock.mock.calls[0][1] as RequestInit).headers).not.toHaveProperty("Cookie");
+  });
+
+  it("normalizes the real backend serializer contract for latest and historical routes", async () => {
+    vi.stubEnv("APP_BASE_URL", "https://notebooklens.example");
+    vi.mocked(cookies).mockResolvedValue({ getAll: () => [] } as unknown as Awaited<ReturnType<typeof cookies>>);
+    // Python test_workspace_contract validates this entire shared fixture against
+    // serialize_thread(), preventing independent fixture-shape drift.
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      review: {}, snapshot: null, threads: [serializedThread],
+    }), { headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const payload of [await getReviewWorkspace("example", "notebooks", 1), await getSnapshotWorkspace("example", "notebooks", 1, 1)]) {
+      const thread = payload.threads[0];
+      expect(thread.github_mirror_state).toBe("mirrored");
+      expect(thread.github_root_comment_url).toBe(serializedThread.github_mirror.root_comment_url);
+      expect(thread.github_root_comment_id).toBe(123);
+      expect(thread.github_last_mirrored_at).toBe(serializedThread.github_mirror.last_mirrored_at);
+      expect(summarizeGitHubMirrorStatus(thread)).toMatchObject({ label: "Posted", linkLabel: "Open mirrored PR thread" });
+      expect(summarizeGitHubMirrorStatus(thread).description).toContain("native conversation is not resolved automatically");
+    }
+  });
+
+  it.each([
+    ["pending", "Posting pending"], ["failed", "Posting failed"],
+    ["skipped", "Posting skipped"], [null, "Posting status unavailable"],
+  ])("preserves nested %s state and explicit nulls over stale flat values", async (state, label) => {
+    vi.stubEnv("APP_BASE_URL", "https://notebooklens.example");
+    vi.mocked(cookies).mockResolvedValue({ getAll: () => [] } as unknown as Awaited<ReturnType<typeof cookies>>);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      review: {}, snapshot: null, threads: [{
+        ...serializedThread, github_mirror_state: "mirrored", github_root_comment_url: "https://github.example.test/stale",
+        github_mirror: { ...serializedThread.github_mirror, state, root_comment_url: null },
+      }],
+    }), { headers: { "Content-Type": "application/json" } })));
+    const thread = (await getReviewWorkspace("example", "notebooks", 1)).threads[0];
+    expect(thread.github_mirror_state).toBe(state);
+    expect(thread.github_root_comment_url).toBeNull();
+    expect(summarizeGitHubMirrorStatus(thread).label).toBe(label);
   });
 });

@@ -36,6 +36,41 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); });
 
+test("AI settings recovery shares the compact shell, keyboard navigation and honest access states", async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  for (const [width, height] of [[1440, 900], [1280, 800], [390, 844], [320, 800]]) {
+    await page.setViewportSize({ width, height });
+    for (const kind of ["unauthenticated", "forbidden", "not-found", "unavailable"]) {
+      await page.goto(`${origin}?recovery=${kind}`);
+      await expect(page.getByRole("heading", { name: "AI review settings", exact: true })).toHaveCSS("font-size", "20px");
+      const home = page.getByRole("link", { name: "Home", exact: true });
+      await expect(home).toBeVisible();
+      await expect(home).toHaveAttribute("href", "/");
+      await expect(home).toHaveCSS("border-radius", "6px");
+      await expect(page.getByRole("link", { name: "Back to review" })).toHaveAttribute("href", "/reviews/example/research/pulls/7");
+      await expect(page.getByRole("main")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Save settings" })).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("link", { name: "Skip to gateway settings" })).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("main")).toBeFocused();
+      if (kind === "forbidden") {
+        await expect(page.getByText(/Repository write access alone is not enough/)).toBeVisible();
+        await expect(page.getByRole("link", { name: "Check GitHub access again" })).toHaveAttribute("href", "/api/auth/github/login?next_path=%2Fsettings");
+        await page.screenshot({ path: info.outputPath(`ai-forbidden-${width}.png`), fullPage: true });
+      }
+      if (kind === "unavailable") await expect(page.getByRole("link", { name: "Try again" })).toHaveAttribute("href", "/settings");
+    }
+  }
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.goto(`${origin}?recovery=forbidden`);
+  await expect(page.locator("main > section")).toHaveCSS("background-color", "rgb(13, 17, 23)");
+  await page.screenshot({ path: info.outputPath("ai-forbidden-dark.png"), fullPage: true });
+  expect(errors).toEqual([]);
+});
+
 test("AI settings preserve save/test boundaries and accessible pending/error feedback", async ({ page }, info) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   const outbound: string[] = []; page.on("request", (request) => { if (!request.url().startsWith(origin)) outbound.push(new URL(request.url()).origin); });

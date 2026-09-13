@@ -24,6 +24,11 @@ Before changing UI code, styles, layout, or interactions, read
   and disabled states, draft continuity, and console/runtime errors.
 - Preserve authentication, CSP, sandboxing, and private data boundaries. Use
   synthetic fixtures. Document remaining debt and any deliberate guideline exception.
+- Keep settings success, expired-session, forbidden, missing-resource, and service
+  failure states in the same compact shell with visible Home and Back navigation.
+  Explain recovery without exposing raw upstream errors or implying repository
+  write access grants installation administration. Test actual route branches
+  with mocked authorization results; never bypass permissions to fix an error UI.
 - Test authenticated GET and POST with the actual Next runtime, not only mocked
   headers. Mutable cookie stores can differ from readonly page stores: use
   `getAll()` and request-cookie serialization, not `.size` or Set-Cookie strings.

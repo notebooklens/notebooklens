@@ -358,9 +358,9 @@ describe("review workspace helpers", () => {
     };
 
     expect(summarizeGitHubMirrorStatus(thread)).toEqual({
-      label: "Mirrored to GitHub",
+      label: "Posted",
       tone: "success",
-      description: "GitHub reviewers can open the mirrored PR thread directly.",
+      description: "Comments are posted to GitHub. Replies made on GitHub are not imported automatically.",
       linkLabel: "Open mirrored PR thread",
     });
   });

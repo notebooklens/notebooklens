@@ -1,0 +1,26 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "managed_review_id": "00000000-0000-0000-0000-000000000002",
+  "origin_snapshot_id": "00000000-0000-0000-0000-000000000003",
+  "current_snapshot_id": "00000000-0000-0000-0000-000000000003",
+  "anchor": {"notebook_path": "analysis.ipynb", "block_kind": "source"},
+  "anchor_drifted": false,
+  "status": "resolved",
+  "carried_forward": false,
+  "created_by_github_user_id": 1,
+  "created_at": "2026-01-01T00:00:00+00:00",
+  "updated_at": "2026-01-01T00:00:00+00:00",
+  "resolved_at": "2026-01-01T00:00:00+00:00",
+  "resolved_by_github_user_id": 1,
+  "github_mirror": {
+    "state": "mirrored",
+    "root_comment_id": 123,
+    "root_comment_url": "https://github.example.test/example/notebooks/pull/1#discussion_r123",
+    "last_mirrored_at": "2026-01-01T00:00:00+00:00",
+    "mode": "app",
+    "fallback_reason": null,
+    "target": "review_comment",
+    "last_action": "resolved"
+  },
+  "messages": []
+}

@@ -53,20 +53,6 @@ const SNAPSHOT_HISTORY_ID = "workspace-snapshot-history";
 const ViewPreferences = createContext({ showPrevious: true, showOutputs: true });
 const CommentDrafts = createContext<Map<string, string> | null>(null);
 
-type RailJumpTarget = {
-  id: string;
-  label: string;
-  caption: string;
-};
-
-type RailNavigationData = {
-  notebookTargets: RailJumpTarget[];
-  threadTargets: RailJumpTarget[];
-  outputTargets: RailJumpTarget[];
-  orderedOpenThreads: ReviewThread[];
-};
-
-
 export function ReviewWorkspace({
   workspace,
   currentPath,
@@ -77,11 +63,12 @@ export function ReviewWorkspace({
   const [activeView, setActiveView] = useState<"changes" | "discussions">("changes");
   const [showPrevious, setShowPrevious] = useState(true);
   const [showOutputs, setShowOutputs] = useState(true);
+  const [discussionFilter, setDiscussionFilter] = useState<"all" | "open" | "resolved">("all");
+  const [changeIndex, setChangeIndex] = useState(-1);
   const availableAnchors = new Set(snapshot?.status === "ready" ? snapshot.payload.review.notebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) => Object.values(row.thread_anchors).map(buildAnchorKey))) : []);
   const unmatchedThreads = workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && (thread.anchor_drifted || !availableAnchors.has(buildAnchorKey(thread.anchor))));
   const unmatchedIds = new Set(unmatchedThreads.map((thread) => thread.id));
   const threadsByAnchor = groupThreadsByAnchor(workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && !unmatchedIds.has(thread.id)));
-  const openThreads = workspace.threads.filter((thread) => thread.status === "open" && thread.anchor.block_kind !== "metadata");
   const [openComposerKey, setOpenComposerKey] = useState<string | null>(null);
   const visibleNotebooks = snapshot?.status === "ready"
     ? snapshot.payload.review.notebooks.filter(
@@ -90,12 +77,16 @@ export function ReviewWorkspace({
           notebook.render_rows.some((row) => hasVisibleReviewBlocks(row, threadsByAnchor)),
       )
     : [];
-  const railNavigation = collectRailNavigationData(visibleNotebooks, threadsByAnchor);
-  const primaryOpenThread = railNavigation.orderedOpenThreads[0] ?? openThreads[0] ?? null;
-  const latestSnapshotLabel =
-    workspace.review.latest_snapshot_index === null
-      ? "No push ready yet"
-      : `Latest push ${workspace.review.latest_snapshot_index}`;
+  const changeTargets = visibleNotebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) =>
+    (["source", "outputs"] as const).filter((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind) && row.thread_anchors[kind]).map((kind) => buildBlockSectionId(row.thread_anchors[kind])),
+  ));
+  const displayedAnchors = new Set(visibleNotebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) => getReviewBlockKinds(row, threadsByAnchor).map((kind) => buildAnchorKey(row.thread_anchors[kind])))));
+  const navigateChange = (direction: number) => {
+    if (!changeTargets.length) return;
+    const index = changeIndex < 0 ? (direction < 0 ? changeTargets.length - 1 : 0) : (changeIndex + direction + changeTargets.length) % changeTargets.length;
+    setChangeIndex(index);
+    jumpToFragment(changeTargets[index], () => setActiveView("changes"));
+  };
   const selectedSnapshotLabel =
     snapshot === null
       ? "No push selected"
@@ -107,6 +98,7 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     setOpenComposerKey(null);
+    setChangeIndex(-1);
     commentDrafts.current.clear();
   }, [snapshot?.id]);
 
@@ -115,14 +107,14 @@ export function ReviewWorkspace({
       const target = document.getElementById(window.location.hash.slice(1));
       if (!target) return;
       if (target.closest("[data-review-changes]")) setActiveView("changes");
-      if (target.closest(".discussion-index")) setActiveView("discussions");
+      if (target.closest(".discussion-index")) { setActiveView("discussions"); setDiscussionFilter("all"); }
       revealFragment(target.id);
       focusFragment(target.id);
     };
     reveal();
     window.addEventListener("hashchange", reveal);
     return () => window.removeEventListener("hashchange", reveal);
-  }, [snapshot?.id]);
+  }, [snapshot?.id, workspace.threads]);
 
   return (
     <CommentDrafts.Provider value={commentDrafts.current}><ViewPreferences.Provider value={{ showPrevious, showOutputs }}><div className="workspace-shell notebook-document-workspace" id={WORKSPACE_TOP_ID} onClick={(event) => {
@@ -134,6 +126,7 @@ export function ReviewWorkspace({
       }
     }}>
       <nav className="workspace-topbar" aria-label="Workspace navigation">
+        <a className="workspace-skip-link" href={activeView === "changes" ? "#review-changes" : "#review-discussions"}>Skip to review content</a>
         <div className="workspace-home-links">
           <Link className="workspace-brand" href="/">NotebookLens</Link>
           <Link className="text-link" href="/">Home</Link>
@@ -165,53 +158,127 @@ export function ReviewWorkspace({
             <span className="workspace-pr-number">
               PR #{workspace.review.pull_number}
             </span>
-            <span className="workspace-pr-installation">
-              {installationLabel}
-            </span>
           </div>
         </div>
         <div className="workspace-pr-strip-meta">
-          <div className="hero-meta workspace-meta">
-            <StatusPill label={reviewStatusLabel} tone="default" />
-            <StatusPill label={selectedSnapshotLabel} tone="default" />
-            <StatusPill
-              label={`${workspace.review.thread_counts.unresolved} open`}
-              tone="accent"
-            />
-          </div>
           <p className="workspace-strip-caption workspace-strip-caption-inline">
-            {latestSnapshotLabel} · {workspace.review.thread_counts.resolved} resolved ·{" "}
-            {workspace.review.thread_counts.outdated} outdated
+            {reviewStatusLabel} · {selectedSnapshotLabel} · {workspace.review.thread_counts.unresolved} open
           </p>
         </div>
       </header>
 
       {flashNotice ? (
-        <div className={`flash-banner flash-${flashNotice.tone}`}>
+        <div role="status" className={`flash-banner flash-${flashNotice.tone}`}>
           {flashNotice.message}
         </div>
       ) : null}
 
       <nav className="review-toolbar" aria-label="Review views">
-        <button type="button" aria-pressed={activeView === "changes"} onClick={() => setActiveView("changes")}>Changes</button>
-        <button type="button" aria-pressed={activeView === "discussions"} onClick={() => setActiveView("discussions")}>Discussions ({workspace.threads.length})</button>
-        <label><input type="checkbox" checked={showPrevious} onChange={(event) => setShowPrevious(event.target.checked)} /> Show previous version</label>
-        <label><input type="checkbox" checked={showOutputs} onChange={(event) => setShowOutputs(event.target.checked)} /> Show outputs</label>
-        <WorkspaceMenu label="Navigate review" align="end">
-          {snapshot?.status === "ready" ? (
-            <QuickJumpRailCard notebookTargets={railNavigation.notebookTargets} outputTargets={railNavigation.outputTargets} threadTargets={railNavigation.threadTargets} onRevealChanges={() => setActiveView("changes")} />
-          ) : <p>Navigation is available when this push is ready.</p>}
-          {primaryOpenThread ? <OpenThreadRailCard openThreadCount={openThreads.length} thread={primaryOpenThread} /> : null}
-        </WorkspaceMenu>
+        <button
+          type="button"
+          aria-pressed={activeView === "changes"}
+          onClick={() => setActiveView("changes")}
+        >
+          Changes
+        </button>
+        <button
+          type="button"
+          aria-pressed={activeView === "discussions"}
+          onClick={() => setActiveView("discussions")}
+        >
+          Discussions ({workspace.threads.length})
+        </button>
+        <div className="review-task-controls" hidden={activeView !== "changes"}>
+          <label className="notebook-select-label">
+            <span className="sr-only">Notebook</span>
+            <select
+              aria-label="Notebook"
+              defaultValue=""
+              onChange={(event) => {
+                if (event.target.value) jumpToFragment(event.target.value, () => setActiveView("changes"));
+              }}
+            >
+              <option value="" disabled>Notebooks ({visibleNotebooks.length})</option>
+              {visibleNotebooks.map((notebook) => (
+                <option key={notebook.path} value={buildNotebookSectionId(notebook.path)}>
+                  {notebook.path}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!changeTargets.length}
+            title={!changeTargets.length ? "No changed code or outputs" : "Previous changed block"}
+            onClick={() => navigateChange(-1)}
+          >
+            Previous change
+          </button>
+          <button
+            type="button"
+            disabled={!changeTargets.length}
+            title={!changeTargets.length ? "No changed code or outputs" : "Next changed block"}
+            onClick={() => navigateChange(1)}
+          >
+            Next change
+          </button>
+          <WorkspaceMenu label="View options">
+            <label><input type="checkbox" checked={showPrevious} onChange={(event) => setShowPrevious(event.target.checked)} /> Show previous version</label>
+            <label><input type="checkbox" checked={showOutputs} onChange={(event) => setShowOutputs(event.target.checked)} /> Show outputs</label>
+          </WorkspaceMenu>
+        </div>
+        <div className="review-task-controls" hidden={activeView !== "discussions"} aria-label="Filter discussions">
+          {(["all", "open", "resolved"] as const).map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              aria-pressed={discussionFilter === filter}
+              onClick={() => setDiscussionFilter(filter)}
+            >
+              {filter === "all" ? "All" : filter === "open" ? "Open" : "Resolved"}
+            </button>
+          ))}
+        </div>
+        <div className="review-version-controls">
+          {snapshot ? <PushDetails review={workspace.review} snapshot={snapshot} /> : null}
+          <SnapshotHistoryRailCard review={workspace.review} />
+        </div>
       </nav>
       {snapshot ? (
         <SnapshotOverview review={workspace.review} snapshot={snapshot} visibleNotebooks={visibleNotebooks} />
-      ) : <SnapshotHistoryRailCard review={workspace.review} />}
-      <main hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
+      ) : null}
+      <main id="review-discussions" tabIndex={-1} hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
         <h2>Discussions on this push</h2>
-        {workspace.threads.length ? workspace.threads.map((thread) => <article key={thread.id}><p>{thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}{thread.anchor_drifted || unmatchedIds.has(thread.id) ? " · Anchor needs review" : ""}</p><ThreadCard thread={thread} currentPath={currentPath} surface="index" /></article>) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
+        {workspace.threads.length ? workspace.threads.map((thread) => (
+          <article
+            hidden={discussionFilter !== "all" && thread.status !== discussionFilter}
+            key={thread.id}
+          >
+            <p className="discussion-context">
+              {thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}
+              {thread.anchor_drifted || unmatchedIds.has(thread.id) ? " · Original anchor; not matched on this push" : ""}
+            </p>
+            {!thread.anchor_drifted &&
+              displayedAnchors.has(buildAnchorKey(thread.anchor)) &&
+              thread.anchor.block_kind !== "metadata" ? (
+                <a
+                  className="text-link discussion-context-link"
+                  href={`#${buildBlockSectionId(thread.anchor)}`}
+                  onClick={() => setActiveView("changes")}
+                >
+                  View in notebook
+                </a>
+              ) : <OriginalDiscussionLink thread={thread} review={workspace.review} />}
+            <DiscussionPreview thread={thread} notebooks={visibleNotebooks} />
+            <ThreadCard thread={thread} currentPath={currentPath} surface="index" />
+          </article>
+        )) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
+        {workspace.threads.length > 0 &&
+          !workspace.threads.some((thread) => discussionFilter === "all" || thread.status === discussionFilter) ? (
+            <p>No {discussionFilter} discussions on this push.</p>
+          ) : null}
       </main><div hidden={activeView !== "changes"} data-review-changes className="workspace-grid">
-        <main className="workspace-main">
+        <main id="review-changes" tabIndex={-1} className="workspace-main">
           {!snapshot ? (
             <EmptyState
               title="This review is not ready yet"
@@ -229,47 +296,6 @@ export function ReviewWorkspace({
           {snapshot?.status === "ready" &&
           visibleNotebooks.length > 0 ? (
             <section className="notebook-stack">
-              {visibleNotebooks.length > 1 ? (
-                <details className="summary-card notebook-jump-card">
-                  <summary className="notebook-jump-summary">
-                    <span>
-                      <strong>Jump between notebooks</strong>
-                      <span className="history-caption notebook-jump-summary-copy">
-                        {visibleNotebooks.length} changed notebooks
-                      </span>
-                    </span>
-                    <span className="muted-copy">
-                      Open navigator
-                    </span>
-                  </summary>
-                  <div className="notebook-jump-grid">
-                    {visibleNotebooks.map((notebook) => {
-                      const [directoryLabel, fileLabel] = splitNotebookPath(notebook.path);
-                      const reviewItemCount = notebook.render_rows.filter((row) =>
-                        hasVisibleReviewBlocks(row, threadsByAnchor),
-                      ).length;
-                      const threadCount = countThreadsForNotebook(notebook, threadsByAnchor);
-
-                      return (
-                        <a
-                          className="history-link notebook-jump-link"
-                          href={`#${buildNotebookSectionId(notebook.path)}`}
-                          key={`jump-${notebook.path}`}
-                        >
-                          <span className="notebook-jump-copy">
-                            <strong>{fileLabel}</strong>
-                            <span className="history-caption">{directoryLabel}</span>
-                          </span>
-                          <span className="notebook-jump-meta">
-                            <span>{reviewItemCount} items</span>
-                            <span>{threadCount} threads</span>
-                          </span>
-                        </a>
-                      );
-                    })}
-                  </div>
-                </details>
-              ) : null}
               {visibleNotebooks.map((notebook) => (
                 <NotebookCard
                   currentPath={currentPath}
@@ -355,7 +381,7 @@ type SnapshotOverviewProps = {
 };
 
 
-function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOverviewProps) {
+function SnapshotOverview({ snapshot, visibleNotebooks }: SnapshotOverviewProps) {
   const changedRows = visibleNotebooks.map((notebook) => notebook.render_rows.filter((row) => (["source", "outputs"] as const).some((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind))));
   const changedNotebookCount = changedRows.filter((rows) => rows.length > 0).length;
   const changedCellCount = changedRows.reduce((count, rows) => count + rows.length, 0);
@@ -379,43 +405,19 @@ function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOvervi
       {snapshot.payload.review.notices.map((notice) => (
         <p className="muted-copy" role="note" key={notice}>{notice}</p>
       ))}
-      <div className="snapshot-controls" aria-label="Push controls">
-      <WorkspaceMenu label="Push details">
-        <div className="snapshot-disclosure-panel">
-          <div className="snapshot-strip snapshot-context-strip">
-            <span>Prepared {formatTimestamp(snapshot.created_at)}</span>
-            <span>
-              {review.base_branch} · {snapshot.base_sha.slice(0, 12)} {"->"} {snapshot.head_sha.slice(0, 12)}
-            </span>
-          </div>
-          <div className="snapshot-overview-stats">
-            <div className="summary-metric snapshot-metric">
-              <span className="summary-label">PR</span>
-              <strong>#{review.pull_number}</strong>
-            </div>
-            <div className="summary-metric snapshot-metric">
-              <span className="summary-label">Compared against</span>
-              <strong>{review.base_branch}</strong>
-            </div>
-            <div className="summary-metric snapshot-metric">
-              <span className="summary-label">Latest commit in view</span>
-              <strong>{snapshot.head_sha.slice(0, 12)}</strong>
-            </div>
-            <div className="summary-metric snapshot-metric">
-              <span className="summary-label">Thread status</span>
-              <strong>
-                {review.thread_counts.unresolved} open · {review.thread_counts.resolved} resolved
-              </strong>
-            </div>
-          </div>
-        </div>
-      </WorkspaceMenu>
-      <SnapshotHistoryRailCard review={review} />
-      </div>
     </section>
   );
 }
 
+
+function PushDetails({ review, snapshot }: { review: WorkspacePayload["review"]; snapshot: ReviewSnapshotRecord }) {
+  return <WorkspaceMenu label="Push details" align="end"><h2>Push {snapshot.snapshot_index}</h2><dl className="push-detail-list">
+    <dt>Saved</dt><dd>{formatTimestamp(snapshot.created_at)}</dd>
+    <dt>Base</dt><dd>{review.base_branch} · <code>{snapshot.base_sha.slice(0, 12)}</code></dd>
+    <dt>Head</dt><dd><code>{snapshot.head_sha.slice(0, 12)}</code></dd>
+    <dt>Discussions</dt><dd>{review.thread_counts.unresolved} open · {review.thread_counts.resolved} resolved in NotebookLens</dd>
+  </dl></WorkspaceMenu>;
+}
 
 type NotebookCardProps = {
   review: WorkspacePayload["review"];
@@ -508,42 +510,6 @@ function NotebookCard({
         ))}
       </div>
     </details>
-  );
-}
-
-
-function OpenThreadRailCard({
-  thread,
-  openThreadCount,
-}: {
-  thread: ReviewThread;
-  openThreadCount: number;
-}) {
-  const [directoryLabel, fileLabel] = splitNotebookPath(thread.anchor.notebook_path);
-
-  return (
-    <section className="side-card side-card-compact">
-      <div className="sidebar-rail-head">
-        <h2>{openThreadCount === 1 ? "Open thread" : "Open threads"}</h2>
-        <StatusPill label={`${openThreadCount} open`} tone="accent" />
-      </div>
-      <p className="muted-copy side-card-copy">
-        {openThreadCount === 1
-          ? "Jump back into the active discussion without scanning the full diff."
-          : "Showing one active discussion so the rail stays compact."}
-      </p>
-      <a
-        className="history-link rail-thread-link"
-        href={`#${buildThreadSectionId(thread.id)}`}
-      >
-        <span className="notebook-jump-copy">
-          <strong>{fileLabel}</strong>
-          <span className="history-caption">{directoryLabel}</span>
-        </span>
-        <span className="history-caption">{formatThreadAnchorSummary(thread.anchor)}</span>
-      </a>
-      <p className="thread-preview rail-thread-preview">{summarizeThreadPreview(thread)}</p>
-    </section>
   );
 }
 
@@ -1066,6 +1032,67 @@ function InlineThreadComposer({
 }
 
 
+function OriginalDiscussionLink({ thread, review }: {
+  thread: ReviewThread;
+  review: WorkspacePayload["review"];
+}) {
+  const origin = review.snapshot_history.find((entry) => entry.id === thread.origin_snapshot_id);
+  return (
+    <p className="muted-copy">
+      This discussion’s original context is not displayed in Changes on this push.
+      {origin && origin.snapshot_index !== review.selected_snapshot_index ? (
+        <> <Link
+          className="text-link"
+          href={buildSnapshotRoute(review.owner, review.repo, review.pull_number, origin.snapshot_index) as Route}
+        >
+          Open original push {origin.snapshot_index}
+        </Link></>
+      ) : null}
+    </p>
+  );
+}
+
+function DiscussionPreview({ thread, notebooks }: {
+  thread: ReviewThread;
+  notebooks: SnapshotNotebook[];
+}) {
+  if (thread.anchor_drifted || thread.anchor.block_kind === "metadata") return null;
+  const row = notebooks
+    .find((notebook) => notebook.path === thread.anchor.notebook_path)
+    ?.render_rows.find((candidate) =>
+      buildAnchorKey(candidate.thread_anchors[thread.anchor.block_kind]) === buildAnchorKey(thread.anchor),
+    );
+  if (!row) return null;
+
+  const source = row.source.head ?? row.source.base;
+  const outputSummary = thread.anchor.block_kind === "outputs"
+    ? getMeaningfulOutputItems(row)
+        .slice(0, 3)
+        .map((item) => "text" in item ? item.text : "summary" in item ? item.summary : "Saved image")
+        .join(" · ")
+        .slice(0, 400)
+    : null;
+  if (!source && !outputSummary) return null;
+
+  return (
+    <div>
+      {source ? (
+        <pre
+          className="discussion-source-preview"
+          aria-label={row.source.head === null
+            ? "Previous source context (first four lines)"
+            : "Current source context (first four lines)"}
+        >
+          <code>{source.split("\n").slice(0, 4).join("\n").slice(0, 600)}</code>
+        </pre>
+      ) : null}
+      {outputSummary ? (
+        <p className="muted-copy discussion-output-preview">Saved output excerpt: {outputSummary}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ThreadCard({
   thread,
   currentPath,
@@ -1076,7 +1103,7 @@ function ThreadCard({
   surface?: "changes" | "index";
 }) {
   const mirrorStatus = summarizeGitHubMirrorStatus(thread);
-  const authorLabel = thread.messages[0]?.author_login ?? "NotebookLens reviewer";
+  const authorLabel = thread.messages.at(-1)?.author_login ?? "NotebookLens reviewer";
   const previewText = summarizeThreadPreview(thread);
   const messageCount = thread.messages.length;
   const sectionId = `${surface === "index" ? "index-" : ""}${buildThreadSectionId(thread.id)}`;
@@ -1094,24 +1121,25 @@ function ThreadCard({
             <p className="thread-preview">{previewText}</p>
           </div>
           <div className="thread-head-pills">
-            <StatusPill label={thread.status} tone={threadTone(thread.status)} />
+            <StatusPill label={thread.status === "resolved" ? "Resolved in NotebookLens" : thread.status} tone={threadTone(thread.status)} />
             {thread.carried_forward ? <StatusPill label="continued here" tone="accent" /> : null}
           </div>
         </div>
         <div className="thread-secondary-row">
           <span className="muted-copy">
-            Started {formatTimestamp(thread.created_at)} · {messageCount} message{messageCount === 1 ? "" : "s"}
+            Latest reply {formatTimestamp(thread.messages.at(-1)?.created_at ?? thread.created_at)} · {messageCount} message{messageCount === 1 ? "" : "s"}
           </span>
           <span className="muted-copy thread-mirror-note" title={mirrorStatus.description}>
             GitHub: {mirrorStatus.label}
           </span>
         </div>
+        <span className="thread-expand-label">Expand or collapse discussion</span>
       </summary>
 
       {(thread.github_root_comment_url || thread.github_last_mirrored_at) ? (
         <div className="thread-secondary-row thread-secondary-row-expanded">
           <span className="muted-copy thread-mirror-note" title={mirrorStatus.description}>
-            GitHub: {mirrorStatus.label}
+            {mirrorStatus.description}
           </span>
           <div className="thread-secondary-links">
             {thread.github_root_comment_url && mirrorStatus.linkLabel ? (
@@ -1208,122 +1236,13 @@ function ThreadCard({
 }
 
 
-function QuickJumpRailCard({
-  notebookTargets,
-  threadTargets,
-  outputTargets,
-  onRevealChanges,
-}: {
-  notebookTargets: RailJumpTarget[];
-  threadTargets: RailJumpTarget[];
-  outputTargets: RailJumpTarget[];
-  onRevealChanges: () => void;
-}) {
-  const [activeHash, setActiveHash] = useState("");
-  const navigate = (hash: string) => { onRevealChanges(); setActiveHash(hash); };
-
-  useEffect(() => {
-    const syncHash = () => {
-      setActiveHash(window.location.hash);
-    };
-
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => {
-      window.removeEventListener("hashchange", syncHash);
-    };
-  }, []);
-
-  return (
-    <section className="side-card side-card-compact">
-      <div className="sidebar-rail-head">
-        <h2>Review navigation</h2>
-      </div>
-      <div className="sidebar-jump-list">
-        <RailJumpButton
-          activeHash={activeHash}
-          emptyStateLabel="No notebooks with open threads on this push."
-          label="Next notebook with open threads"
-          targets={notebookTargets}
-          onNavigate={navigate}
-        />
-        <RailJumpButton
-          activeHash={activeHash}
-          emptyStateLabel="No unresolved code/output discussions in Changes."
-          label="Next unresolved thread"
-          targets={threadTargets}
-          onNavigate={navigate}
-        />
-        <RailJumpButton
-          activeHash={activeHash}
-          emptyStateLabel="No changed outputs are visible in this push."
-          label="Next changed output"
-          targets={outputTargets}
-          onNavigate={navigate}
-        />
-      </div>
-      <div className="sidebar-jump-footer">
-        <a className="text-link" href={`#${WORKSPACE_TOP_ID}`}>
-          Back to top
-        </a>
-        <a className="text-link" href={`#${SNAPSHOT_HISTORY_ID}`}>
-          Switch push
-        </a>
-      </div>
-    </section>
-  );
-}
-
-
-function RailJumpButton({
-  activeHash,
-  emptyStateLabel,
-  label,
-  onNavigate,
-  targets,
-}: {
-  activeHash: string;
-  emptyStateLabel: string;
-  label: string;
-  onNavigate: (hash: string) => void;
-  targets: RailJumpTarget[];
-}) {
-  const nextTarget = getNextRailTarget(targets, activeHash);
-  const targetCountLabel =
-    targets.length === 0 ? "Unavailable" : `${targets.length} ${pluralize(targets.length, "target")}`;
-
-  return (
-    <button
-      className="sidebar-jump-button"
-      disabled={nextTarget === null}
-      onClick={() => {
-        if (nextTarget === null) {
-          return;
-        }
-        jumpToFragment(nextTarget.id, onNavigate);
-      }}
-      type="button"
-    >
-      <span className="sidebar-jump-copy">
-        <span className="sidebar-jump-kicker">{label}</span>
-        <strong>{nextTarget?.label ?? "Nothing queued here"}</strong>
-        <span className="history-caption">
-          {nextTarget?.caption ?? emptyStateLabel}
-        </span>
-      </span>
-      <span className="sidebar-jump-meta">{targetCountLabel}</span>
-    </button>
-  );
-}
-
-
 function SnapshotHistoryRailCard({
   review,
 }: {
   review: WorkspacePayload["review"];
 }) {
   return (
-    <WorkspaceMenu label="Switch push" id={SNAPSHOT_HISTORY_ID}>
+    <WorkspaceMenu label="Switch push" id={SNAPSHOT_HISTORY_ID} align="end">
       <h2>Saved pushes ({review.snapshot_history.length})</h2>
       <nav className="history-list" aria-label="Push history">
         {review.snapshot_history.length === 0 ? <p>No saved pushes yet.</p> : null}
@@ -1356,12 +1275,11 @@ function SnapshotHistoryRailCard({
                 aria-current={review.selected_snapshot_index === entry.snapshot_index ? "page" : undefined}
                 key={entry.id}
               >
-                <span>
-                  {entry.is_latest
-                    ? `Latest push (${entry.snapshot_index})`
-                    : `Push ${entry.snapshot_index}`}
+                <span className="history-entry-copy">
+                  <strong>{entry.head_commit_subject || "Commit subject unavailable"}</strong>
+                  <span className="history-caption">Push {entry.snapshot_index}{entry.is_latest ? " · Latest" : ""}{review.selected_snapshot_index === entry.snapshot_index ? " · Current" : ""} · {entry.head_sha.slice(0, 8)}</span>
+                  <span className="history-caption">Saved {formatTimestamp(entry.created_at)}</span>
                 </span>
-                <span className="history-caption">{entry.head_sha.slice(0, 12)}</span>
               </Link>
             );
           })}
@@ -1372,7 +1290,7 @@ function SnapshotHistoryRailCard({
 
 
 function summarizeThreadPreview(thread: ReviewThread): string {
-  const body = thread.messages[0]?.body_markdown?.replace(/\s+/g, " ").trim();
+  const body = thread.messages.at(-1)?.body_markdown?.replace(/\s+/g, " ").trim();
 
   if (!body) {
     return "Open the thread for the full discussion.";
@@ -1532,79 +1450,6 @@ function splitNotebookPath(path: string): [string, string] {
 }
 
 
-function countThreadsForNotebook(
-  notebook: SnapshotNotebook,
-  threadsByAnchor: Map<string, ReviewThread[]>,
-): number {
-  return getThreadsForNotebook(notebook, threadsByAnchor).length;
-}
-
-
-function collectRailNavigationData(
-  notebooks: SnapshotNotebook[],
-  threadsByAnchor: Map<string, ReviewThread[]>,
-): RailNavigationData {
-  const notebookTargets: RailJumpTarget[] = [];
-  const threadTargets: RailJumpTarget[] = [];
-  const outputTargets: RailJumpTarget[] = [];
-  const orderedOpenThreads: ReviewThread[] = [];
-  const seenThreadIds = new Set<string>();
-
-  for (const notebook of notebooks) {
-    const [directoryLabel, fileLabel] = splitNotebookPath(notebook.path);
-    const notebookOpenThreads = getThreadsForNotebook(notebook, threadsByAnchor).filter(
-      (thread) => thread.status === "open",
-    );
-
-    if (notebookOpenThreads.length > 0) {
-      notebookTargets.push({
-        id: buildNotebookSectionId(notebook.path),
-        label: fileLabel,
-        caption: `${directoryLabel} · ${notebookOpenThreads.length} open ${pluralize(
-          notebookOpenThreads.length,
-          "thread",
-        )}`,
-      });
-    }
-
-    for (const row of notebook.render_rows) {
-      if (isBlockChanged(row, "outputs") && hasMeaningfulBlockContent(row, "outputs")) {
-        outputTargets.push({
-          id: buildBlockSectionId(row.thread_anchors.outputs),
-          label: `${fileLabel} · ${formatCellLabel(row)}`,
-          caption: row.summary.trim() || `${directoryLabel} · Changed output`,
-        });
-      }
-
-      for (const blockKind of getReviewBlockKinds(row, threadsByAnchor)) {
-        const threads = threadsByAnchor.get(buildAnchorKey(row.thread_anchors[blockKind])) ?? [];
-
-        for (const thread of threads) {
-          if (thread.status !== "open" || seenThreadIds.has(thread.id)) {
-            continue;
-          }
-
-          seenThreadIds.add(thread.id);
-          orderedOpenThreads.push(thread);
-          threadTargets.push({
-            id: buildThreadSectionId(thread.id),
-            label: `${fileLabel} · ${formatThreadAnchorSummary(thread.anchor)}`,
-            caption: directoryLabel,
-          });
-        }
-      }
-    }
-  }
-
-  return {
-    notebookTargets,
-    threadTargets,
-    outputTargets,
-    orderedOpenThreads,
-  };
-}
-
-
 function getThreadsForNotebook(
   notebook: SnapshotNotebook,
   threadsByAnchor: Map<string, ReviewThread[]>,
@@ -1713,24 +1558,6 @@ function formatThreadAnchorSummary(anchor: ThreadAnchor): string {
 
 function pluralize(count: number, singular: string): string {
   return count === 1 ? singular : `${singular}s`;
-}
-
-
-function getNextRailTarget(
-  targets: RailJumpTarget[],
-  activeHash: string,
-): RailJumpTarget | null {
-  if (targets.length === 0) {
-    return null;
-  }
-
-  const currentId = activeHash.startsWith("#") ? activeHash.slice(1) : activeHash;
-  const currentIndex = targets.findIndex((target) => target.id === currentId);
-  if (currentIndex === -1) {
-    return targets[0] ?? null;
-  }
-
-  return targets[(currentIndex + 1) % targets.length] ?? null;
 }
 
 

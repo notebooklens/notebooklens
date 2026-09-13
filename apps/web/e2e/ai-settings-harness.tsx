@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { AiGatewaySettings } from "../components/ai-gateway-settings";
+import { AiSettingsRecovery, type AiSettingsRecoveryKind } from "../components/ai-settings-shell";
 import { buildRow, buildWorkspace } from "./workspace-fixture";
 import type { AiGatewayConfig } from "../lib/types";
 
@@ -12,4 +13,5 @@ const config: AiGatewayConfig = {
   litellm_virtual_key_id: null, active: false, updated_by_github_user_id: 101, updated_at: "2026-09-13T00:00:00Z",
 };
 if (location.search.includes("empty")) { config.base_url = null; config.model_name = null; config.has_api_key = false; config.static_header_names = []; }
-createRoot(document.getElementById("root")!).render(<AiGatewaySettings review={buildWorkspace(buildRow()).review} config={config} currentPath="/reviews/example/research/pulls/7/ai" />);
+const recovery = new URLSearchParams(location.search).get("recovery") as AiSettingsRecoveryKind | null;
+createRoot(document.getElementById("root")!).render(recovery ? <AiSettingsRecovery kind={recovery} context="example/research" reviewHref="/reviews/example/research/pulls/7" currentPath="/settings" loginHref="/api/auth/github/login?next_path=%2Fsettings" /> : <AiGatewaySettings review={buildWorkspace(buildRow()).review} config={config} currentPath="/reviews/example/research/pulls/7/ai" />);

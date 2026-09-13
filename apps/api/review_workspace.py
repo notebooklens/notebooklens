@@ -273,6 +273,7 @@ def get_workspace_payload(
                     "status": snapshot.status.value,
                     "base_sha": snapshot.base_sha,
                     "head_sha": snapshot.head_sha,
+                    "head_commit_subject": _snapshot_commit_subject(snapshot),
                     "created_at": snapshot.created_at.isoformat(),
                     "is_latest": review.latest_snapshot_id == snapshot.id,
                 }
@@ -285,6 +286,17 @@ def get_workspace_payload(
             for thread in visible_threads
         ],
     }
+
+
+def _snapshot_commit_subject(snapshot: ReviewSnapshot) -> str | None:
+    payload = snapshot.snapshot_payload_json
+    metadata = payload.get("head_commit") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("sha") != snapshot.head_sha:
+        return None
+    subject = metadata.get("subject")
+    if not isinstance(subject, str) or not subject:
+        return None
+    return subject.splitlines()[0].strip()[:500] or None
 
 
 def create_thread(

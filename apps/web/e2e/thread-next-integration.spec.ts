@@ -29,6 +29,7 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
   let reads = 0;
   let authenticatedReads = 0;
   let authenticatedCreates = 0;
+  let authenticatedResolves = 0;
   const syntheticSession = "synthetic-next-session-not-a-real-credential";
   try {
     for (const entry of ["app", "components", "lib", "package.json", "tsconfig.json", "next.config.ts"]) {
@@ -55,6 +56,15 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
         thread.messages = [{ ...thread.messages[0], id: "created-message", body_markdown: body.body_markdown }];
         workspace.threads.push(thread);
         response.writeHead(201).end(JSON.stringify({ thread }));
+      } else if (request.method === "POST" && request.url === "/api/threads/thread-id/resolve") {
+        if (request.headers.cookie !== `notebooklens_session=${syntheticSession}`) {
+          response.writeHead(401).end(JSON.stringify({ detail: "Authentication required" }));
+          return;
+        }
+        authenticatedResolves++;
+        workspace.threads[0].status = "resolved";
+        workspace.review.thread_counts = { unresolved: 1, resolved: 1, outdated: 0 };
+        response.end(JSON.stringify({ thread: workspace.threads[0] }));
       } else response.writeHead(404).end(JSON.stringify({ detail: "Synthetic endpoint not found" }));
     })().catch(() => { response.writeHead(500).end(JSON.stringify({ detail: "Synthetic fixture error" })); }); });
     await new Promise<void>(resolve => api!.listen(0, "127.0.0.1", resolve));
@@ -114,6 +124,25 @@ test("real Next refresh adds the thread and retains other stable-snapshot drafts
     await expect(comment).toHaveValue("Separate output draft survives");
     await page.getByRole("button", { name: "Add comment on Cell 2 code", exact: true }).click();
     await expect(comment).toHaveValue("");
+    // The current hash already points at the discussion. A successful resolve
+    // must reveal it after Open filtering, even without a hashchange event.
+    await page.getByRole("button", { name: "Discussions (2)", exact: true }).click();
+    await page.evaluate(() => { window.location.hash = "index-thread-thread-id"; });
+    await page.getByRole("button", { name: "Open", exact: true }).click();
+    const originalDiscussion = page.locator("#index-thread-thread-id");
+    await originalDiscussion.getByRole("button", { name: "Resolve", exact: true }).click();
+    await expect(originalDiscussion.getByText("Resolved in NotebookLens", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(originalDiscussion.getByRole("status")).toContainText(/resolved/i);
+    expect(authenticatedResolves).toBe(1);
+    expect(new URL(page.url()).searchParams.has("flash")).toBe(false);
+    expect(new URL(page.url()).searchParams.has("message")).toBe(false);
+    await page.screenshot({ path: info.outputPath("real-next-resolved-discussion.png"), fullPage: true });
+    await page.getByRole("button", { name: "Changes", exact: true }).click();
+    await changes.locator("#thread-thread-id > summary").click();
+    await expect(reply).toHaveValue("Unsubmitted reply stays mounted");
+    await page.getByRole("button", { name: "Add comment on Cell 2 outputs", exact: true }).click();
+    await expect(comment).toHaveValue("Separate output draft survives");
     expect(new URL(page.url()).origin).toBe(origin);
     expect(runtimeErrors).toEqual([]);
     expect(outbound).toEqual([]);

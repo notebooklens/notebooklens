@@ -94,6 +94,32 @@ class ManagedGitHubClient:
             ref=ref,
         )
 
+    def get_commit_subject(
+        self, *, settings: ApiSettings, installation_id: int,
+        repository: str, sha: str,
+    ) -> str | None:
+        """One authenticated request for the exact snapshot head, no pagination.
+
+        https://docs.github.com/en/rest/commits/commits#get-a-commit
+        Uses existing installation Contents:read; stores only sha/subject, not
+        author identity, the commit body, or the rest of the upstream response.
+        """
+        payload = self._request_json(
+            method="GET",
+            url=f"{self.api_base_url}/repos/{self._encode_repository(repository)}/commits/{quote(sha, safe='')}",
+            token=self._resolve_token(settings=settings, installation_id=installation_id, access_token=None),
+            body=None,
+            expected_statuses={200},
+        )
+        # Never label a stored SHA with metadata for a different commit.
+        if payload.get("sha") != sha:
+            return None
+        commit = payload.get("commit")
+        message = commit.get("message") if isinstance(commit, Mapping) else None
+        if not isinstance(message, str) or not message.strip():
+            return None
+        return message.splitlines()[0].strip()[:500] or None
+
     def create_or_update_check_run(
         self,
         *,

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import type {
   AiGatewaySettingsResponse,
   WorkspacePayload,
+  WorkspaceApiPayload,
   SessionIdentity,
   RepositoryPage,
 } from "@/lib/types";
@@ -34,9 +35,9 @@ export async function getReviewWorkspace(
   repo: string,
   pullNumber: number,
 ): Promise<WorkspacePayload> {
-  return apiRequest<WorkspacePayload>(
+  return normalizeWorkspacePayload(await apiRequest<WorkspaceApiPayload>(
     `/api/reviews/${owner}/${repo}/pulls/${pullNumber}`,
-  );
+  ));
 }
 
 export async function getSessionIdentity(): Promise<SessionIdentity> {
@@ -56,9 +57,26 @@ export async function getSnapshotWorkspace(
   pullNumber: number,
   snapshotIndex: number,
 ): Promise<WorkspacePayload> {
-  return apiRequest<WorkspacePayload>(
+  return normalizeWorkspacePayload(await apiRequest<WorkspaceApiPayload>(
     `/api/reviews/${owner}/${repo}/pulls/${pullNumber}/snapshots/${snapshotIndex}`,
-  );
+  ));
+}
+
+export function normalizeWorkspacePayload(payload: WorkspaceApiPayload): WorkspacePayload {
+  return {
+    ...payload,
+    threads: (payload.threads ?? []).map(({ github_mirror, ...thread }) => ({
+      ...thread,
+      // A nested response is authoritative, including explicit nulls. Legacy
+      // flat fixtures/responses remain readable during rolling deployments.
+      ...(github_mirror ? {
+        github_mirror_state: github_mirror.state,
+        github_root_comment_id: github_mirror.root_comment_id,
+        github_root_comment_url: github_mirror.root_comment_url,
+        github_last_mirrored_at: github_mirror.last_mirrored_at,
+      } : {}),
+    })),
+  };
 }
 
 
