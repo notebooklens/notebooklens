@@ -1409,6 +1409,7 @@ def _rewrite_snapshot_payload_asset_refs(
                         "width": item.get("width"),
                         "height": item.get("height"),
                         "change_type": item.get("change_type"),
+                        **({"side": item["side"]} if "side" in item else {}),
                     }
                 )
             rewritten_rows.append(

@@ -13,7 +13,7 @@ import {
   postLogout,
   putApiJson,
 } from "@/lib/api";
-import { buildFlashRedirect } from "@/lib/review-workspace";
+import { buildFlashRedirect, sanitizeWorkspaceReturnTo, workspaceRevalidationPath } from "@/lib/review-workspace";
 import type {
   AiGatewayActionState,
   AiGatewaySettingsResponse,
@@ -40,7 +40,7 @@ export async function createThreadAction(formData: FormData): Promise<never> {
     return handleMutationError(error, returnTo);
   }
 
-  revalidatePath(returnTo);
+  revalidatePath(workspaceRevalidationPath(returnTo));
   redirect(
     asRoute(buildFlashRedirect(returnTo, {
       tone: "success",
@@ -63,7 +63,7 @@ export async function replyToThreadAction(formData: FormData): Promise<never> {
     return handleMutationError(error, returnTo);
   }
 
-  revalidatePath(returnTo);
+  revalidatePath(workspaceRevalidationPath(returnTo));
   redirect(
     asRoute(buildFlashRedirect(returnTo, {
       tone: "success",
@@ -83,7 +83,7 @@ export async function resolveThreadAction(formData: FormData): Promise<never> {
     return handleMutationError(error, returnTo);
   }
 
-  revalidatePath(returnTo);
+  revalidatePath(workspaceRevalidationPath(returnTo));
   redirect(
     asRoute(buildFlashRedirect(returnTo, {
       tone: "success",
@@ -103,7 +103,7 @@ export async function reopenThreadAction(formData: FormData): Promise<never> {
     return handleMutationError(error, returnTo);
   }
 
-  revalidatePath(returnTo);
+  revalidatePath(workspaceRevalidationPath(returnTo));
   redirect(
     asRoute(buildFlashRedirect(returnTo, {
       tone: "success",
@@ -122,7 +122,7 @@ export async function logoutAction(formData: FormData): Promise<never> {
     return handleMutationError(error, returnTo);
   }
 
-  redirect(asRoute(buildLoginHref(returnTo)));
+  redirect(asRoute(buildLoginHref(sanitizeWorkspaceReturnTo(returnTo))));
 }
 
 
@@ -176,7 +176,7 @@ export async function submitAiGatewaySettingsAction(
       `/api/settings/ai-gateway?installation_id=${encodeURIComponent(installationId)}`,
       payload,
     );
-    revalidatePath(asRoute(returnTo));
+    revalidatePath(workspaceRevalidationPath(returnTo));
     return {
       ...buildAiGatewayActionState(result.config),
       notice: {
@@ -186,7 +186,7 @@ export async function submitAiGatewaySettingsAction(
     };
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 401) {
-      redirect(asRoute(buildLoginHref(returnTo)));
+      redirect(asRoute(buildLoginHref(sanitizeWorkspaceReturnTo(returnTo))));
     }
 
     return {
@@ -216,7 +216,7 @@ function requiredField(formData: FormData, key: string): string {
 
 function handleMutationError(error: unknown, returnTo: string): never {
   if (error instanceof ApiRequestError && error.status === 401) {
-    redirect(asRoute(buildLoginHref(returnTo)));
+    redirect(asRoute(buildLoginHref(sanitizeWorkspaceReturnTo(returnTo))));
   }
 
   const detail =

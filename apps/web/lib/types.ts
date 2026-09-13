@@ -50,6 +50,9 @@ export type RenderRow = {
   thread_anchors: Record<SnapshotBlockKind, ThreadAnchor>;
 };
 
+/** Which notebook side this rendered representation belongs to. Absent on legacy payloads. */
+export type OutputItemSide = "base" | "head";
+
 export type RenderOutputPlaceholderItem = {
   kind: "placeholder";
   output_type: string;
@@ -57,6 +60,7 @@ export type RenderOutputPlaceholderItem = {
   summary: string;
   truncated: boolean;
   change_type: OutputItemChangeType;
+  side?: OutputItemSide;
 };
 
 export type RenderOutputImageItem = {
@@ -66,11 +70,68 @@ export type RenderOutputImageItem = {
   width: number | null;
   height: number | null;
   change_type: OutputItemChangeType;
+  side?: OutputItemSide;
+};
+
+/** Bounded stream/error/plain-text/JSON output (`mime_type` is a category label, not a wire MIME type). */
+export type RenderOutputTextItem = {
+  kind: "text";
+  text: string;
+  mime_type: string;
+  summary: string;
+  truncated: boolean;
+  change_type: OutputItemChangeType;
+  side?: OutputItemSide;
+};
+
+/** Rendered in a script-disabled, network-blocked sandbox; never evaluated as script. */
+export type RenderOutputHtmlItem = {
+  kind: "html";
+  html: string;
+  summary: string;
+  truncated: boolean;
+  change_type: OutputItemChangeType;
+  side?: OutputItemSide;
+};
+
+export type PlotlySpec = {
+  data: unknown[];
+  layout?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+};
+
+/** Normalized Plotly JSON only; never a live script, rendered in a sandboxed iframe. */
+export type RenderOutputPlotlyItem = {
+  kind: "plotly";
+  spec: PlotlySpec;
+  summary: string;
+  truncated: boolean;
+  change_type: OutputItemChangeType;
+  side?: OutputItemSide;
+};
+
+/**
+ * Saved ipywidgets manager state (`application/vnd.jupyter.widget-state+json`
+ * schema v2), sourced from each side's own notebook metadata, never a live
+ * kernel. Rendered in the same sandboxed iframe as Plotly.
+ */
+export type RenderOutputWidgetItem = {
+  kind: "widget";
+  view: Record<string, unknown>;
+  state: Record<string, unknown>;
+  summary: string;
+  truncated: boolean;
+  change_type: OutputItemChangeType;
+  side?: OutputItemSide;
 };
 
 export type RenderOutputItem =
   | RenderOutputPlaceholderItem
-  | RenderOutputImageItem;
+  | RenderOutputImageItem
+  | RenderOutputTextItem
+  | RenderOutputHtmlItem
+  | RenderOutputPlotlyItem
+  | RenderOutputWidgetItem;
 
 export type SnapshotNotebook = {
   path: string;
@@ -166,6 +227,7 @@ export type ReviewThread = {
   anchor: ThreadAnchor;
   status: ReviewThreadStatus;
   carried_forward: boolean;
+  anchor_drifted?: boolean;
   created_by_github_user_id: number;
   created_at: string;
   updated_at: string;

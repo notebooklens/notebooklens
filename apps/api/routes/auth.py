@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..config import ApiSettings, get_settings
@@ -50,6 +51,27 @@ def get_session_store(settings: ApiSettings = Depends(get_settings)) -> OAuthSes
     return OAuthSessionStore(SessionTokenCipher(settings.session_secret))
 
 
+def _build_app_url(settings: ApiSettings, path: str, *, params: dict[str, str] | None = None) -> str:
+    query = f"?{urlencode(params)}" if params else ""
+    return f"{settings.app_base_url}{path}{query}"
+
+
+def _redirect_to_auth_error(
+    *,
+    settings: ApiSettings,
+    message: str,
+    next_path: str = "/",
+) -> RedirectResponse:
+    return RedirectResponse(
+        _build_app_url(
+            settings,
+            "/api/auth/github/error",
+            params={"message": message, "next_path": next_path},
+        ),
+        status_code=302,
+    )
+
+
 @router.get("/github/login")
 def github_login(
     next_path: str = Query(default="/"),
@@ -79,8 +101,10 @@ def github_login(
 
 @router.get("/github/callback")
 def github_callback(
-    code: Annotated[str, Query()],
-    state: Annotated[str, Query()],
+    code: Annotated[str | None, Query()] = None,
+    state: Annotated[str | None, Query()] = None,
+    installation_id: Annotated[int | None, Query()] = None,
+    setup_action: Annotated[str | None, Query()] = None,
     settings: ApiSettings = Depends(get_settings),
     db_session: Session = Depends(get_db_session),
     oauth_client: GitHubOAuthClient = Depends(get_oauth_client),
@@ -89,19 +113,56 @@ def github_callback(
     state_cookie: str | None = Cookie(default=None, alias=STATE_COOKIE_NAME),
 ) -> RedirectResponse:
     """Complete the GitHub OAuth flow and persist a user session."""
+    if state is None:
+        if installation_id is not None or setup_action is not None:
+            redirect_params = {
+                key: value
+                for key, value in {
+                    "code": code,
+                    "installation_id": str(installation_id) if installation_id is not None else None,
+                    "setup_action": setup_action,
+                }.items()
+                if value is not None
+            }
+            return RedirectResponse(
+                _build_app_url(settings, "/api/github/install/callback", params=redirect_params),
+                status_code=302,
+            )
+        return _redirect_to_auth_error(
+            settings=settings,
+            message="GitHub sign-in could not continue because the callback was missing its state.",
+        )
+    if code is None:
+        return _redirect_to_auth_error(
+            settings=settings,
+            message="GitHub sign-in could not continue because the callback was missing its code.",
+        )
     if state_cookie is None or state_cookie != state:
-        raise HTTPException(status_code=400, detail="OAuth state cookie mismatch")
+        return _redirect_to_auth_error(
+            settings=settings,
+            message="GitHub sign-in could not continue because the NotebookLens state cookie did not match.",
+        )
     try:
         payload = signer.verify_state(state)
     except OAuthStateError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    token = oauth_client.exchange_code(
-        client_id=settings.github_oauth_client_id,
-        client_secret=settings.github_oauth_client_secret,
-        code=code,
-        redirect_uri=settings.github_oauth_callback_url,
-    )
-    user = oauth_client.fetch_user(token.access_token)
+        return _redirect_to_auth_error(
+            settings=settings,
+            message=str(exc),
+        )
+    try:
+        token = oauth_client.exchange_code(
+            client_id=settings.github_oauth_client_id,
+            client_secret=settings.github_oauth_client_secret,
+            code=code,
+            redirect_uri=settings.github_oauth_callback_url,
+        )
+        user = oauth_client.fetch_user(token.access_token)
+    except OAuthStateError as exc:
+        return _redirect_to_auth_error(
+            settings=settings,
+            message=str(exc),
+            next_path=str(payload["next_path"]),
+        )
     session_record = session_store.create_session(
         db_session,
         github_user=user,
@@ -124,6 +185,41 @@ def github_callback(
         path="/",
     )
     return redirect_response
+
+
+@router.get("/github/error", response_class=HTMLResponse)
+def github_auth_error_page(
+    message: Annotated[str, Query()] = "NotebookLens could not complete GitHub sign-in.",
+    next_path: Annotated[str, Query()] = "/",
+    settings: ApiSettings = Depends(get_settings),
+) -> HTMLResponse:
+    """Render a simple, user-facing OAuth error page instead of a raw 500."""
+    login_url = _build_app_url(
+        settings,
+        "/api/auth/github/login",
+        params={"next_path": next_path},
+    )
+    body = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>NotebookLens GitHub Sign-In Error</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body style="font-family: sans-serif; margin: 2rem; line-height: 1.5;">
+    <main style="max-width: 42rem; margin: 0 auto;">
+      <p style="text-transform: uppercase; letter-spacing: 0.08em; color: #4b5563;">GitHub Sign-In Error</p>
+      <h1 style="margin-top: 0.25rem;">NotebookLens could not complete GitHub sign-in</h1>
+      <p>{escape(message)}</p>
+      <p>
+        <a href="{escape(login_url, quote=True)}">Try GitHub sign-in again</a>
+        &nbsp;or&nbsp;
+        <a href="{escape(settings.app_base_url, quote=True)}">return to NotebookLens</a>.
+      </p>
+    </main>
+  </body>
+</html>"""
+    return HTMLResponse(content=body, status_code=400)
 
 
 @router.post("/logout", status_code=204)

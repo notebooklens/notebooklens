@@ -12,8 +12,14 @@ export default defineConfig({
       "@": __dirname,
     },
   },
+  esbuild: {
+    // The root tsconfig sets jsx: "preserve" for Next's own SWC/Babel
+    // transform; vitest's own esbuild-based transform needs to actually
+    // compile JSX itself, so override it for the test run only.
+    jsx: "automatic",
+  },
   test: {
     environment: "node",
-    include: ["lib/**/*.test.ts"],
+    include: ["lib/**/*.test.ts", "components/**/*.test.tsx"],
   },
 });

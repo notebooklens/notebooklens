@@ -332,6 +332,9 @@ class ReviewSnapshot(Base):
         back_populates="current_snapshot",
         foreign_keys="ReviewThread.current_snapshot_id",
     )
+    thread_anchors: Mapped[list["ThreadSnapshotAnchor"]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan",
+    )
 
 
 class ReviewThread(TimestampMixin, Base):
@@ -378,6 +381,9 @@ class ReviewThread(TimestampMixin, Base):
     )
 
     managed_review: Mapped[ManagedReview] = relationship(back_populates="review_threads")
+    snapshot_anchors: Mapped[list["ThreadSnapshotAnchor"]] = relationship(
+        back_populates="thread", cascade="all, delete-orphan",
+    )
     origin_snapshot: Mapped[ReviewSnapshot] = relationship(
         back_populates="origin_threads",
         foreign_keys=[origin_snapshot_id],
@@ -413,6 +419,26 @@ Index(
     ReviewThread.current_snapshot_id,
     ReviewThread.status,
 )
+
+
+class ThreadSnapshotAnchor(Base):
+    """Known placement (or last-known placement) at an immutable snapshot."""
+
+    __tablename__ = "thread_snapshot_anchors"
+
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("review_threads.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("review_snapshots.id", ondelete="CASCADE"),
+        primary_key=True, index=True,
+    )
+    anchor_json: Mapped[dict] = mapped_column(JSONVariant, nullable=False)
+    anchor_drifted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    thread: Mapped[ReviewThread] = relationship(back_populates="snapshot_anchors")
+    snapshot: Mapped[ReviewSnapshot] = relationship(back_populates="thread_anchors")
 
 
 class ThreadMessage(Base):

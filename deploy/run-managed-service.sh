@@ -19,39 +19,12 @@ run_api() {
 }
 
 run_worker() {
-  exec python - <<'PY'
-from __future__ import annotations
-
-import os
-import time
-
-from apps.api.notification_delivery import NotificationDeliveryError
-from apps.api.worker import (
-    process_notification_delivery_once,
-    process_snapshot_build_job_once,
-)
-
-
-poll_interval = float(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "5"))
-notification_batch_size = int(os.environ.get("WORKER_NOTIFICATION_BATCH_SIZE", "25"))
-
-while True:
-    snapshot_result = process_snapshot_build_job_once()
-    try:
-        notification_result = process_notification_delivery_once(limit=notification_batch_size)
-    except NotificationDeliveryError:
-        time.sleep(poll_interval)
-        continue
-
-    if snapshot_result.status == "idle" and notification_result.processed == 0:
-        time.sleep(poll_interval)
-PY
+  exec python -m apps.api.worker_loop
 }
-
-run_migrations
 
 case "${1:-}" in
   api)
+    run_migrations
     run_api
     ;;
   worker)

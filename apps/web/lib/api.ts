@@ -19,6 +19,14 @@ export class ApiRequestError extends Error {
 }
 
 
+export class ApiConfigurationError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "ApiConfigurationError";
+  }
+}
+
+
 export async function getReviewWorkspace(
   owner: string,
   repo: string,
@@ -145,9 +153,61 @@ async function readErrorDetail(response: Response): Promise<string> {
 }
 
 
+const LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
+
+
 function getApiBaseUrl(): string {
+  const configuredBaseUrl = process.env.APP_BASE_URL?.trim();
+  if (!configuredBaseUrl) {
+    if (allowsLocalApiFallback()) {
+      return LOCAL_API_BASE_URL;
+    }
+    throw new ApiConfigurationError("APP_BASE_URL is required in production");
+  }
+
+  return normalizeAppBaseUrl(configuredBaseUrl);
+}
+
+
+function normalizeAppBaseUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ApiConfigurationError("APP_BASE_URL must be an absolute http(s) origin");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.host) {
+    throw new ApiConfigurationError("APP_BASE_URL must be an absolute http(s) origin");
+  }
+
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new ApiConfigurationError(
+      "APP_BASE_URL must be an origin without a path, query, or fragment",
+    );
+  }
+
+  if (!allowsLocalApiFallback() && isLoopbackHost(parsed.hostname)) {
+    throw new ApiConfigurationError(
+      "APP_BASE_URL must be a public http(s) origin in production",
+    );
+  }
+
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
+
+function allowsLocalApiFallback(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
+
+
+function isLoopbackHost(hostname: string): boolean {
   return (
-    process.env.APP_BASE_URL?.replace(/\/$/, "") ||
-    "http://127.0.0.1:8000"
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1"
   );
 }

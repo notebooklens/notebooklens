@@ -27,6 +27,7 @@ from .models import (
     ReviewThread,
     ReviewThreadStatus,
     ThreadMessage,
+    ThreadSnapshotAnchor,
     UserSession,
 )
 from .oauth import GitHubOAuthClient, OAuthSessionStore, SessionCipherError
@@ -327,6 +328,10 @@ def create_thread(
     db_session.add(thread)
     db_session.flush()
 
+    thread.snapshot_anchors.append(ThreadSnapshotAnchor(
+        snapshot_id=snapshot.id, anchor_json=dict(normalized_anchor), anchor_drifted=False,
+    ))
+
     message = ThreadMessage(
         thread_id=thread.id,
         author_github_user_id=actor_github_user_id,
@@ -466,6 +471,7 @@ def reopen_thread(
     thread.status = (
         ReviewThreadStatus.OPEN
         if latest_snapshot_id is not None and thread.current_snapshot_id == latest_snapshot_id
+        and not _thread_anchor_drifted(thread, snapshot_id=latest_snapshot_id)
         else ReviewThreadStatus.OUTDATED
     )
     thread.resolved_at = None
@@ -503,11 +509,12 @@ def list_visible_threads_for_snapshot(
 ) -> list[ReviewThread]:
     return db_session.execute(
         select(ReviewThread)
-        .options(selectinload(ReviewThread.messages))
+        .options(selectinload(ReviewThread.messages), selectinload(ReviewThread.snapshot_anchors))
         .where(
             or_(
                 ReviewThread.origin_snapshot_id == snapshot_id,
                 ReviewThread.current_snapshot_id == snapshot_id,
+                ReviewThread.snapshot_anchors.any(ThreadSnapshotAnchor.snapshot_id == snapshot_id),
             )
         )
         .order_by(ReviewThread.created_at.asc())
@@ -520,32 +527,45 @@ def carry_forward_open_threads(
     review: ManagedReview,
     snapshot: ReviewSnapshot,
 ) -> None:
-    open_threads = db_session.execute(
+    if snapshot.managed_review_id != review.id:
+        raise ReviewWorkspaceValidationError("Snapshot belongs to another review")
+    threads = db_session.execute(
         select(ReviewThread)
+        .options(selectinload(ReviewThread.snapshot_anchors))
         .where(
             ReviewThread.managed_review_id == review.id,
-            ReviewThread.status == ReviewThreadStatus.OPEN,
         )
         .order_by(ReviewThread.created_at.asc())
     ).scalars().all()
-    if not open_threads:
+    if not threads:
         return
     candidate_anchors = list(iter_snapshot_anchors(snapshot.snapshot_payload_json))
-    for thread in open_threads:
-        if thread.current_snapshot_id == snapshot.id:
+    for thread in threads:
+        # Do not invent history: legacy rows only know their origin and current
+        # placements. A rebuild of an older snapshot must not backdate a thread.
+        for known_id, anchor, drifted in (
+            (thread.origin_snapshot_id, thread.origin_anchor_json, False),
+            (thread.current_snapshot_id, thread.anchor_json, False),
+        ):
+            if not any(item.snapshot_id == known_id for item in thread.snapshot_anchors):
+                thread.snapshot_anchors.append(ThreadSnapshotAnchor(
+                    snapshot_id=known_id, anchor_json=dict(anchor), anchor_drifted=drifted,
+                ))
+        if (snapshot.snapshot_index <= db_session.get(ReviewSnapshot, thread.origin_snapshot_id).snapshot_index
+                or snapshot.snapshot_index <= db_session.get(ReviewSnapshot, thread.current_snapshot_id).snapshot_index
+                or any(item.snapshot_id == snapshot.id for item in thread.snapshot_anchors)):
             continue
-        matched_anchor = next(
-            (
-                candidate
-                for candidate in candidate_anchors
-                if anchors_match_for_carry_forward(thread.anchor_json, candidate)
-            ),
-            None,
-        )
-        if matched_anchor is None:
+        matches = [candidate for candidate in candidate_anchors
+                   if anchors_match_for_carry_forward(thread.anchor_json, candidate)]
+        # Multiple matching rows are ambiguous, even if their anchors are equal.
+        drifted = len(matches) != 1
+        anchor = dict(thread.anchor_json if drifted else matches[0])
+        thread.snapshot_anchors.append(ThreadSnapshotAnchor(
+            snapshot_id=snapshot.id, anchor_json=anchor, anchor_drifted=drifted,
+        ))
+        if drifted and thread.status == ReviewThreadStatus.OPEN:
             thread.status = ReviewThreadStatus.OUTDATED
-            continue
-        thread.anchor_json = matched_anchor
+        thread.anchor_json = anchor
         thread.current_snapshot_id = snapshot.id
         thread.carried_forward = True
 
@@ -940,11 +960,26 @@ def _effective_thread_anchor(
     snapshot_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     raw_anchor: Any
-    if snapshot_id is not None and snapshot_id == thread.origin_snapshot_id:
+    selected_id = snapshot_id or thread.current_snapshot_id
+    placement = next((item for item in thread.snapshot_anchors
+                      if item.snapshot_id == selected_id), None)
+    if placement is not None:
+        raw_anchor = placement.anchor_json
+    elif selected_id == thread.origin_snapshot_id:
         raw_anchor = thread.origin_anchor_json
     else:
         raw_anchor = thread.anchor_json
     return dict(raw_anchor) if isinstance(raw_anchor, Mapping) else {}
+
+
+def _thread_anchor_drifted(thread: ReviewThread, *, snapshot_id: uuid.UUID) -> bool:
+    placement = next((item for item in thread.snapshot_anchors
+                      if item.snapshot_id == snapshot_id), None)
+    if placement is not None:
+        return placement.anchor_drifted
+    # Legacy current pointers describe the last successful placement, not the
+    # later snapshot whose failed match made the thread outdated.
+    return False
 
 
 def _serialize_thread(
@@ -963,6 +998,9 @@ def _serialize_thread(
         "origin_snapshot_id": str(thread.origin_snapshot_id),
         "current_snapshot_id": str(thread.current_snapshot_id),
         "anchor": _effective_thread_anchor(thread, snapshot_id=snapshot_id),
+        "anchor_drifted": _thread_anchor_drifted(
+            thread, snapshot_id=snapshot_id or thread.current_snapshot_id,
+        ),
         "status": thread.status.value,
         "carried_forward": thread.carried_forward,
         "created_by_github_user_id": thread.created_by_github_user_id,

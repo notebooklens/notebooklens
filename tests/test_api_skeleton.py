@@ -58,6 +58,7 @@ from apps.api.oauth import (
     GitHubOAuthToken,
     GitHubOAuthUser,
     OAuthSessionStore,
+    OAuthStateError,
     OAuthStateSigner,
     SESSION_COOKIE_NAME,
     STATE_COOKIE_NAME,
@@ -110,6 +111,8 @@ class FakeOAuthClient:
         users_by_token: dict[str, GitHubOAuthUser] | None = None,
         repo_access: dict[tuple[str, str, str], bool] | None = None,
         org_owner_access: dict[tuple[str, str], bool] | None = None,
+        exchange_error: str | None = None,
+        fetch_user_error: str | None = None,
     ) -> None:
         self.exchange_calls: list[dict[str, Any]] = []
         self.users_by_token = dict(
@@ -126,6 +129,8 @@ class FakeOAuthClient:
         self.org_owner_access = dict(org_owner_access or {})
         self.repo_access_checks: list[tuple[str, str, str]] = []
         self.org_owner_checks: list[tuple[str, str]] = []
+        self.exchange_error = exchange_error
+        self.fetch_user_error = fetch_user_error
 
     def build_authorize_url(self, *, client_id: str, redirect_uri: str, state: str, scopes=()):
         del scopes
@@ -140,6 +145,8 @@ class FakeOAuthClient:
                 "redirect_uri": redirect_uri,
             }
         )
+        if self.exchange_error is not None:
+            raise OAuthStateError(self.exchange_error)
         return GitHubOAuthToken(
             access_token="gho_test_token",
             scope="repo read:user user:email",
@@ -148,6 +155,8 @@ class FakeOAuthClient:
         )
 
     def fetch_user(self, access_token: str):
+        if self.fetch_user_error is not None:
+            raise OAuthStateError(self.fetch_user_error)
         return self.users_by_token[access_token]
 
     def can_access_repository(self, access_token: str, *, owner: str, repo: str) -> bool:
@@ -1215,6 +1224,18 @@ def test_managed_api_metadata_and_migration_scaffold_exist() -> None:
     ).exists()
 
 
+def test_managed_service_worker_waits_for_api_health_before_starting() -> None:
+    compose = yaml.safe_load(Path("deploy/docker-compose.yml").read_text())
+    worker_depends_on = compose["services"]["worker"]["depends_on"]
+    assert worker_depends_on["api"]["condition"] == "service_healthy"
+
+
+def test_managed_service_script_runs_migrations_only_for_api_process() -> None:
+    script = Path("deploy/run-managed-service.sh").read_text()
+    assert "\nrun_migrations\n\ncase" not in script
+    assert "api)\n    run_migrations\n    run_api" in script
+
+
 def test_workspace_payload_keeps_origin_anchor_visible_on_origin_snapshot(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     engine = get_engine(settings.database_url)
@@ -1393,6 +1414,101 @@ def test_fastapi_login_callback_logout_flow(tmp_path: Path) -> None:
     assert logout_response.status_code == 204
     with session_scope(settings) as db_session:
         assert db_session.scalars(select(UserSession)).all() == []
+    engine.dispose()
+
+
+def test_fastapi_login_callback_redirects_exchange_failures_to_auth_error_page(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    fake_oauth = FakeOAuthClient(exchange_error="GitHub OAuth token response was incomplete")
+    app.dependency_overrides[get_oauth_client] = lambda: fake_oauth
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    client = TestClient(app)
+    login_response = client.get("/api/auth/github/login", params={"next_path": "/reviews/demo"}, follow_redirects=False)
+    state_cookie = login_response.cookies.get(STATE_COOKIE_NAME)
+    assert state_cookie is not None
+    state = parse_qs(urlparse(login_response.headers["location"]).query)["state"][0]
+
+    client.cookies.set(STATE_COOKIE_NAME, state_cookie)
+    callback_response = client.get(
+        "/api/auth/github/callback",
+        params={"code": "oauth-code", "state": state},
+        follow_redirects=False,
+    )
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"].startswith("https://notebooklens.test/api/auth/github/error?")
+    error_page = client.get(callback_response.headers["location"])
+    assert error_page.status_code == 400
+    assert "NotebookLens could not complete GitHub sign-in" in error_page.text
+    assert "GitHub OAuth token response was incomplete" in error_page.text
+    engine.dispose()
+
+
+def test_fastapi_login_callback_redirects_install_misroutes_to_setup_flow(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/auth/github/callback",
+        params={
+            "code": "install-code",
+            "installation_id": 123,
+            "setup_action": "install",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert (
+        response.headers["location"]
+        == "https://notebooklens.test/api/github/install/callback?code=install-code&installation_id=123&setup_action=install"
+    )
+    engine.dispose()
+
+
+def test_github_install_callback_redirects_signed_out_users_to_login(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/github/install/callback",
+        params={"installation_id": 123, "setup_action": "install"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert (
+        response.headers["location"]
+        == "https://notebooklens.test/api/auth/github/login?next_path=%2F%3Finstallation_id%3D123%26setup_action%3Dinstall"
+    )
+    engine.dispose()
+
+
+def test_github_install_callback_redirects_signed_in_users_home(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    client = TestClient(app)
+    client.cookies.set(SESSION_COOKIE_NAME, "existing-session")
+    response = client.get(
+        "/api/github/install/callback",
+        params={"installation_id": 123, "setup_action": "install"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://notebooklens.test/?installation_id=123&setup_action=install"
     engine.dispose()
 
 
@@ -3583,11 +3699,14 @@ def test_snapshot_worker_carries_forward_open_threads_and_marks_outdated_when_an
         ).one()
         assert thread.id.hex
         assert thread.status == ReviewThreadStatus.OUTDATED
-        assert thread.current_snapshot_id != latest_snapshot.id
+        assert thread.current_snapshot_id == latest_snapshot.id
+        placement = next(item for item in thread.snapshot_anchors if item.snapshot_id == latest_snapshot.id)
+        assert placement.anchor_drifted is True
 
     latest_workspace = client.get("/api/reviews/octo-org/notebooklens/pulls/7").json()
     assert latest_workspace["review"]["selected_snapshot_index"] == 3
-    assert latest_workspace["threads"] == []
+    assert latest_workspace["threads"][0]["id"] == thread_id
+    assert latest_workspace["threads"][0]["anchor_drifted"] is True
     origin_workspace = client.get("/api/reviews/octo-org/notebooklens/pulls/7/snapshots/1").json()
     assert origin_workspace["threads"][0]["id"] == thread_id
     assert origin_workspace["threads"][0]["status"] == "outdated"

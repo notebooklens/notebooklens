@@ -4,28 +4,50 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node interactive-renderer/build.mjs && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:interactive-renderer": "node interactive-renderer/build.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
-    "next": "15.5.15",
+    "@jupyter-widgets/base": "6.0.12",
+    "@jupyter-widgets/base-manager": "1.0.13",
+    "@jupyter-widgets/controls": "5.0.13",
+    "@lumino/messaging": "2.0.5",
+    "@lumino/widgets": "2.9.0",
+    "next": "15.5.25",
+    "plotly.js-dist-min": "4.1.0",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "semver": "7.7.4"
   },
   "devDependencies": {
-    "@next/eslint-plugin-next": "15.5.15",
+    "@next/eslint-plugin-next": "15.5.25",
+    "@playwright/test": "1.56.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.3",
     "@types/node": "22.14.1",
     "@types/react": "19.0.12",
     "@types/react-dom": "19.0.4",
-    "eslint": "9.24.0",
-    "eslint-config-next": "15.5.15",
+    "@types/semver": "7.7.1",
+    "esbuild": "0.25.12",
+    "eslint": "9.39.5",
+    "eslint-config-next": "15.5.25",
     "eslint-plugin-react-hooks": "5.2.0",
     "globals": "16.0.0",
+    "jsdom": "30.0.1",
     "typescript": "5.8.3",
     "typescript-eslint": "8.29.1",
-    "vitest": "3.1.1"
+    "vitest": "3.2.7"
+  },
+  "overrides": {
+    "postcss": "8.5.23",
+    "sharp": "0.35.4",
+    "nanoid@^3.0.0": "3.3.18"
   }
 }

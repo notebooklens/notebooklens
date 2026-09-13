@@ -4,12 +4,24 @@ import {
   buildAnchorKey,
   buildAiGatewayRoute,
   buildFlashRedirect,
+  sanitizeWorkspaceReturnTo,
+  workspaceRevalidationPath,
+  buildWorkspaceActionPath,
   canStartThread,
+  formatOutputMimeLabel,
+  formatTextOutput,
+  getChangedBlockKinds,
+  getMeaningfulOutputItems,
+  getRowSignalSummary,
+  getVisibleBlockKinds,
   groupThreadsByAnchor,
+  hasMeaningfulBlockContent,
+  hasVisibleBlocks,
   isBlockChanged,
   summarizeGitHubMirrorStatus,
+  toggleThreadComposer,
 } from "@/lib/review-workspace";
-import type { RenderRow, ReviewSnapshotRecord, ReviewThread, WorkspaceReview } from "@/lib/types";
+import type { RenderOutputItem, RenderRow, ReviewSnapshotRecord, ReviewThread, WorkspaceReview } from "@/lib/types";
 
 
 function buildRow(): RenderRow {
@@ -151,6 +163,53 @@ function buildThread(row: RenderRow): ReviewThread {
 
 
 describe("review workspace helpers", () => {
+  it("retains local query/fragment only for redirects and uses only pathname for cache invalidation", () => {
+    const target = "/reviews/example?push=2#thread-123";
+    expect(sanitizeWorkspaceReturnTo(target)).toBe(target);
+    expect(workspaceRevalidationPath(target)).toBe("/reviews/example");
+    for (const external of ["https://evil.example/x", "//evil.example/x", "/\\evil.example/x", "/\n/evil.example/x", "/a/..//evil.example/x", "/a/%2e%2e//evil.example/x"]) {
+      expect(sanitizeWorkspaceReturnTo(external)).toBe("/");
+      expect(workspaceRevalidationPath(external)).toBe("/");
+      expect(buildFlashRedirect(external, { tone: "success", message: "Saved" })).toBe("/?flash=success&message=Saved");
+    }
+  });
+
+  it("keeps meaningful rich/text payloads visible when their summary is empty", () => {
+    const common = { summary: "", truncated: false, change_type: "added" as const };
+    const items: RenderOutputItem[] = [
+      { ...common, kind: "text", text: "result: 42", mime_type: "text/plain" },
+      { ...common, kind: "html", html: "<table><tr><td>42</td></tr></table>" },
+      { ...common, kind: "plotly", spec: { data: [{ type: "scatter", y: [42] }] } },
+      { ...common, kind: "plotly", spec: { data: [], layout: { title: { text: "Empty chart" } } } },
+      { ...common, kind: "widget", view: { model_id: "model-1" }, state: { version_major: 2, version_minor: 0, state: { "model-1": {} } } },
+    ];
+    for (const item of items) {
+      const row = buildRow();
+      row.outputs.items = [item];
+      expect(getMeaningfulOutputItems(row)).toEqual([item]);
+      expect(hasMeaningfulBlockContent(row, "outputs")).toBe(true);
+      expect(getVisibleBlockKinds(row, new Map())).toContain("outputs");
+    }
+  });
+
+  it("does not invent content for empty text, HTML, or placeholder output", () => {
+    const row = buildRow();
+    const common = { summary: " ", truncated: false, change_type: "added" as const };
+    row.outputs.items = [
+      { ...common, kind: "text", text: " ", mime_type: "text/plain" },
+      { ...common, kind: "html", html: "" },
+      { ...common, kind: "placeholder", mime_group: "text", output_type: "stream" },
+    ];
+    expect(getMeaningfulOutputItems(row)).toEqual([]);
+    expect(hasMeaningfulBlockContent(row, "outputs")).toBe(false);
+  });
+  it("preserves discussion fragments and rejects external return targets", () => {
+    const notice = { tone: "success" as const, message: "Saved" };
+    expect(buildFlashRedirect("/reviews/example#thread-123", notice)).toBe("/reviews/example?flash=success&message=Saved#thread-123");
+    for (const external of ["https://evil.example/x", "//evil.example/x", "/\\evil.example/x"]) {
+      expect(buildFlashRedirect(external, notice)).toBe("/?flash=success&message=Saved");
+    }
+  });
   it("groups threads by normalized anchor", () => {
     const row = buildRow();
     const thread = buildThread(row);
@@ -160,13 +219,29 @@ describe("review workspace helpers", () => {
   });
 
   it("only allows new threads on changed blocks in the latest ready snapshot", () => {
-    const row = buildRow();
+    const row = {
+      ...buildRow(),
+      outputs: {
+        changed: true,
+        items: [
+          {
+            kind: "placeholder" as const,
+            output_type: "stream",
+            mime_group: "text",
+            summary: "Accuracy dropped from 0.92 to 0.88.",
+            truncated: false,
+            change_type: "modified" as const,
+          },
+        ],
+      },
+    };
     const latestSnapshot = buildSnapshot("snapshot-2");
     const oldSnapshot = buildSnapshot("snapshot-1");
 
     expect(canStartThread(buildReview("snapshot-2"), latestSnapshot, row, "outputs")).toBe(true);
     expect(canStartThread(buildReview("snapshot-2"), latestSnapshot, row, "source")).toBe(false);
     expect(canStartThread(buildReview("snapshot-2"), oldSnapshot, row, "outputs")).toBe(false);
+    expect(canStartThread(buildReview("snapshot-2"), latestSnapshot, buildRow(), "outputs")).toBe(false);
   });
 
   it("keeps flash redirects on the same route", () => {
@@ -178,6 +253,12 @@ describe("review workspace helpers", () => {
     ).toContain("/reviews/octo/notebooklens/pulls/7/snapshots/2?flash=error");
   });
 
+  it("keeps only one create-thread composer open at a time", () => {
+    expect(toggleThreadComposer(null, "anchor-a")).toBe("anchor-a");
+    expect(toggleThreadComposer("anchor-a", "anchor-b")).toBe("anchor-b");
+    expect(toggleThreadComposer("anchor-a", "anchor-a")).toBeNull();
+  });
+
   it("reports whether a specific block changed", () => {
     const row = buildRow();
 
@@ -185,10 +266,88 @@ describe("review workspace helpers", () => {
     expect(isBlockChanged(row, "metadata")).toBe(false);
   });
 
+  it("treats empty metadata and output blocks as not meaningful", () => {
+    const row = buildRow();
+
+    expect(hasMeaningfulBlockContent(row, "outputs")).toBe(false);
+    expect(hasMeaningfulBlockContent(row, "metadata")).toBe(false);
+    expect(hasMeaningfulBlockContent(row, "source")).toBe(true);
+  });
+
+  it("suppresses empty changed blocks when they have no threads", () => {
+    const row = buildRow();
+
+    expect(getVisibleBlockKinds(row, new Map())).toEqual([]);
+    expect(hasVisibleBlocks(row, new Map())).toBe(false);
+  });
+
+  it("keeps thread-only blocks visible even when the diff content is empty", () => {
+    const row = buildRow();
+    const thread = {
+      ...buildThread(row),
+      anchor: row.thread_anchors.outputs,
+    };
+    const threadsByAnchor = groupThreadsByAnchor([thread]);
+
+    expect(getVisibleBlockKinds(row, threadsByAnchor)).toEqual(["outputs"]);
+    expect(hasVisibleBlocks(row, threadsByAnchor)).toBe(true);
+  });
+
+  it("filters empty output placeholder cards out of a visible block", () => {
+    const row = {
+      ...buildRow(),
+      outputs: {
+        changed: true,
+        items: [
+          {
+            kind: "placeholder" as const,
+            output_type: "execute_result",
+            mime_group: "text",
+            summary: "   ",
+            truncated: false,
+            change_type: "modified" as const,
+          },
+          {
+            kind: "placeholder" as const,
+            output_type: "stream",
+            mime_group: "text",
+            summary: "Accuracy dropped from 0.92 to 0.88.",
+            truncated: false,
+            change_type: "modified" as const,
+          },
+        ],
+      },
+    };
+
+    expect(getMeaningfulOutputItems(row)).toEqual([row.outputs.items[1]]);
+  });
+
+  it("returns the changed block kinds for compact row headers", () => {
+    expect(getChangedBlockKinds(buildRow())).toEqual(["outputs"]);
+  });
+
+  it("suppresses generic row summaries that only repeat diff metadata", () => {
+    const genericRow = {
+      ...buildRow(),
+      summary: "cell modified (outputs)",
+    };
+
+    expect(getRowSignalSummary(genericRow)).toBeNull();
+    expect(getRowSignalSummary(buildRow())).toBe("Metric output changed.");
+  });
+
   it("builds the review-scoped LiteLLM settings route", () => {
     expect(buildAiGatewayRoute("octo", "notebooklens", 7)).toBe(
       "/reviews/octo/notebooklens/pulls/7/settings/ai-gateway",
     );
+  });
+
+  it("builds stable post routes for review mutations", () => {
+    expect(buildWorkspaceActionPath("create-thread")).toBe("/actions/threads/create");
+    expect(buildWorkspaceActionPath("reply-thread")).toBe("/actions/threads/reply");
+    expect(buildWorkspaceActionPath("resolve-thread")).toBe("/actions/threads/resolve");
+    expect(buildWorkspaceActionPath("reopen-thread")).toBe("/actions/threads/reopen");
+    expect(buildWorkspaceActionPath("logout")).toBe("/actions/auth/logout");
   });
 
   it("summarizes mirrored GitHub threads", () => {
@@ -204,5 +363,58 @@ describe("review workspace helpers", () => {
       description: "GitHub reviewers can open the mirrored PR thread directly.",
       linkLabel: "Open mirrored PR thread",
     });
+  });
+
+  it("treats new bounded output kinds as meaningful even without image/summary special-casing", () => {
+    const row = buildRow();
+    row.outputs.items = [
+      { kind: "text", text: "42", mime_type: "text/plain", summary: "Text output updated", truncated: false, change_type: "modified" },
+      { kind: "html", html: "<b>x</b>", summary: "HTML output updated", truncated: false, change_type: "modified" },
+      { kind: "plotly", spec: { data: [] }, summary: "Plotly figure updated", truncated: false, change_type: "modified" },
+      { kind: "widget", view: {}, state: {}, summary: "Saved widget updated", truncated: false, change_type: "modified" },
+    ];
+
+    expect(hasMeaningfulBlockContent(row, "outputs")).toBe(true);
+    expect(getMeaningfulOutputItems(row)).toHaveLength(4);
+  });
+
+  it("filters out new output kinds whose summary is blank", () => {
+    const row = buildRow();
+    row.outputs.items = [
+      { kind: "text", text: "", mime_type: "text/plain", summary: "   ", truncated: false, change_type: "modified" },
+    ];
+
+    expect(getMeaningfulOutputItems(row)).toHaveLength(0);
+  });
+});
+
+describe("formatOutputMimeLabel", () => {
+  it("labels stream and error categories", () => {
+    expect(formatOutputMimeLabel("stream")).toBe("Stream");
+    expect(formatOutputMimeLabel("error")).toBe("Error");
+  });
+
+  it("labels JSON categories regardless of exact mime string", () => {
+    expect(formatOutputMimeLabel("application/json")).toBe("JSON");
+    expect(formatOutputMimeLabel("application/vnd.jupyter+json")).toBe("JSON");
+  });
+
+  it("labels plain text and falls back to the raw value otherwise", () => {
+    expect(formatOutputMimeLabel("text/plain")).toBe("Text");
+    expect(formatOutputMimeLabel("text/csv")).toBe("text/csv");
+  });
+});
+
+describe("formatTextOutput", () => {
+  it("pretty-prints valid JSON text", () => {
+    expect(formatTextOutput('{"a":1}', "application/json")).toBe('{\n  "a": 1\n}');
+  });
+
+  it("returns the original text when JSON parsing fails", () => {
+    expect(formatTextOutput("not json", "application/json")).toBe("not json");
+  });
+
+  it("leaves non-JSON mime types untouched", () => {
+    expect(formatTextOutput("plain text output", "stream")).toBe("plain text output");
   });
 });

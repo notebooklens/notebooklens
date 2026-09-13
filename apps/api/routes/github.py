@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import JSONResponse
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..config import ApiSettings, get_settings
 from ..database import get_db_session
 from ..managed_github import ManagedGitHubClient
 from ..orchestration import ingest_pull_request_webhook
+from ..oauth import SESSION_COOKIE_NAME
 from ..webhooks import verify_github_webhook_signature
 
 
@@ -20,6 +23,33 @@ router = APIRouter(prefix="/api/github", tags=["github"])
 
 def get_managed_github_client() -> ManagedGitHubClient:
     return ManagedGitHubClient()
+
+
+@router.get("/install/callback")
+def complete_github_app_install(
+    installation_id: int | None = Query(default=None),
+    setup_action: str | None = Query(default=None),
+    settings: ApiSettings = Depends(get_settings),
+    session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+) -> RedirectResponse:
+    """Handle GitHub App install/setup redirects without sending them to OAuth callback flow."""
+    next_path = "/"
+    if installation_id is not None:
+        params = {
+            "installation_id": str(installation_id),
+        }
+        if setup_action:
+            params["setup_action"] = setup_action
+        next_path = f"/?{urlencode(params)}"
+
+    if session_cookie:
+        return RedirectResponse(f"{settings.app_base_url}{next_path}", status_code=302)
+
+    login_query = urlencode({"next_path": next_path})
+    return RedirectResponse(
+        f"{settings.app_base_url}/api/auth/github/login?{login_query}",
+        status_code=302,
+    )
 
 
 @router.post("/webhooks")

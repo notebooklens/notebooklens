@@ -1,0 +1,19 @@
+# Requires Docker Compose >= 2.24.4 for !override; always combine with base.
+name: notebooklens-acceptance
+
+services:
+  gateway:
+    ports: !override
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - ./Caddyfile.acceptance:/etc/caddy/Caddyfile:ro
+
+  api:
+    environment:
+      MANAGED_AI_UI_ENABLED: "false"
+
+  worker:
+    environment:
+      MANAGED_AI_UI_ENABLED: "false"
+      # SQL LIMIT 0 leaves the notification outbox intact without email calls.
+      WORKER_NOTIFICATION_BATCH_SIZE: "0"

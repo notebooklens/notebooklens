@@ -339,3 +339,194 @@ def test_output_truncation_flag_is_set_for_large_text_outputs() -> None:
     assert output_changes
     assert output_changes[0].truncated is True
     assert "2200 chars" in output_changes[0].summary
+
+
+
+# ---------------------------------------------------------------------------
+# widget saved-state-only changes (notebook-metadata widget state, separate
+# from the per-cell `application/vnd.jupyter.widget-view+json` output)
+# ---------------------------------------------------------------------------
+
+
+_WIDGET_STATE_MIME_TYPE = "application/vnd.jupyter.widget-state+json"
+_WIDGET_VIEW_MIME_TYPE = "application/vnd.jupyter.widget-view+json"
+
+
+def _widget_notebook(cells: list[dict[str, object]], *, widget_state: dict[str, object] | None) -> str:
+    metadata: dict[str, object] = {"kernelspec": {"name": "python3"}, "language_info": {"name": "python"}}
+    if widget_state is not None:
+        metadata["widgets"] = {_WIDGET_STATE_MIME_TYPE: widget_state}
+    return json.dumps(
+        {
+            "cells": cells,
+            "metadata": metadata,
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+    )
+
+
+def _widget_manager_state(models: dict[str, object]) -> dict[str, object]:
+    return {"version_major": 2, "version_minor": 0, "state": models}
+
+
+def _widget_model(*, module: str = "@jupyter-widgets/controls", state: dict[str, object]) -> dict[str, object]:
+    return {
+        "model_name": "IntSliderModel",
+        "model_module": module,
+        "model_module_version": "2.0.0",
+        "state": state,
+    }
+
+
+def _widget_cell(cell_id: str, model_id: str) -> dict[str, object]:
+    return {
+        "cell_type": "code",
+        "id": cell_id,
+        "metadata": {},
+        "execution_count": 1,
+        "source": ["render()\n"],
+        "outputs": [
+            {
+                "output_type": "display_data",
+                "data": {
+                    _WIDGET_VIEW_MIME_TYPE: {
+                        "version_major": 2,
+                        "version_minor": 0,
+                        "model_id": model_id,
+                    }
+                },
+            }
+        ],
+    }
+
+
+def _widget_diff(
+    *,
+    base_cells: list[dict[str, object]],
+    head_cells: list[dict[str, object]],
+    base_widget_state: dict[str, object] | None,
+    head_widget_state: dict[str, object] | None,
+):
+    diff = build_notebook_diff(
+        [
+            NotebookInput(
+                path="widgets.ipynb",
+                change_type="modified",
+                base_content=_widget_notebook(base_cells, widget_state=base_widget_state),
+                head_content=_widget_notebook(head_cells, widget_state=head_widget_state),
+            )
+        ]
+    )
+    return diff.notebooks[0]
+
+
+def _cell_change_by_id(notebook, cell_id: str):
+    for change in notebook.cell_changes:
+        if change.locator.cell_id == cell_id:
+            return change
+    return None
+
+
+def test_widget_state_only_change_is_classified_as_output_changed() -> None:
+    # Same model_id referenced on both sides (cell source/outputs JSON is
+    # byte-for-byte identical): only the saved widget state value differs.
+    notebook = _widget_diff(
+        base_cells=[_widget_cell("widget-cell", "model-1")],
+        head_cells=[_widget_cell("widget-cell", "model-1")],
+        base_widget_state=_widget_manager_state({"model-1": _widget_model(state={"value": 1})}),
+        head_widget_state=_widget_manager_state({"model-1": _widget_model(state={"value": 2})}),
+    )
+    change = _cell_change_by_id(notebook, "widget-cell")
+    assert change is not None
+    assert change.change_type == "output_changed"
+    assert change.outputs_changed is True
+    assert change.source_changed is False
+
+
+def test_widget_state_change_in_transitively_referenced_model_is_classified_as_output_changed() -> None:
+    # model-a (displayed) is itself unchanged but references model-b, whose
+    # saved state changes; the change must still be detected transitively.
+    base_state = _widget_manager_state(
+        {
+            "model-a": _widget_model(state={"children": ["IPY_MODEL_model-b"]}),
+            "model-b": _widget_model(state={"value": 1}),
+        }
+    )
+    head_state = _widget_manager_state(
+        {
+            "model-a": _widget_model(state={"children": ["IPY_MODEL_model-b"]}),
+            "model-b": _widget_model(state={"value": 2}),
+        }
+    )
+    notebook = _widget_diff(
+        base_cells=[_widget_cell("widget-cell", "model-a")],
+        head_cells=[_widget_cell("widget-cell", "model-a")],
+        base_widget_state=base_state,
+        head_widget_state=head_state,
+    )
+    change = _cell_change_by_id(notebook, "widget-cell")
+    assert change is not None
+    assert change.change_type == "output_changed"
+
+
+def test_unrelated_widget_model_change_does_not_dirty_other_cells() -> None:
+    # Two cells: one displays model-a (unchanged), the other has plain
+    # unchanged source/outputs. model-unrelated is not referenced by any
+    # cell's widget-view output, so editing it must not produce a row for
+    # either cell.
+    base_state = _widget_manager_state(
+        {
+            "model-a": _widget_model(state={"value": 1}),
+            "model-unrelated": _widget_model(state={"value": 1}),
+        }
+    )
+    head_state = _widget_manager_state(
+        {
+            "model-a": _widget_model(state={"value": 1}),
+            "model-unrelated": _widget_model(state={"value": 99}),
+        }
+    )
+    plain_cell = {
+        "cell_type": "code",
+        "id": "plain-cell",
+        "metadata": {},
+        "execution_count": 1,
+        "source": ["x = 1\n"],
+        "outputs": [],
+    }
+    notebook = _widget_diff(
+        base_cells=[_widget_cell("widget-cell", "model-a"), plain_cell],
+        head_cells=[_widget_cell("widget-cell", "model-a"), plain_cell],
+        base_widget_state=base_state,
+        head_widget_state=head_state,
+    )
+    assert _cell_change_by_id(notebook, "widget-cell") is None
+    assert _cell_change_by_id(notebook, "plain-cell") is None
+
+
+def test_widget_state_missing_transition_is_classified_as_output_changed() -> None:
+    # Same model_id referenced on both sides, but the saved state disappears
+    # entirely on head (e.g. widget metadata dropped).
+    notebook = _widget_diff(
+        base_cells=[_widget_cell("widget-cell", "model-1")],
+        head_cells=[_widget_cell("widget-cell", "model-1")],
+        base_widget_state=_widget_manager_state({"model-1": _widget_model(state={"value": 1})}),
+        head_widget_state=None,
+    )
+    change = _cell_change_by_id(notebook, "widget-cell")
+    assert change is not None
+    assert change.change_type == "output_changed"
+    assert change.outputs_changed is True
+
+
+def test_widget_state_unchanged_produces_no_cell_change() -> None:
+    # Identical model_id and identical saved state on both sides.
+    state = _widget_manager_state({"model-1": _widget_model(state={"value": 1})})
+    notebook = _widget_diff(
+        base_cells=[_widget_cell("widget-cell", "model-1")],
+        head_cells=[_widget_cell("widget-cell", "model-1")],
+        base_widget_state=state,
+        head_widget_state=_widget_manager_state({"model-1": _widget_model(state={"value": 1})}),
+    )
+    assert _cell_change_by_id(notebook, "widget-cell") is None

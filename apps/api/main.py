@@ -9,6 +9,7 @@ from src import __display_version__
 
 from .config import ApiConfigurationError
 from .managed_github import ManagedGitHubClientError
+from .oauth import OAuthStateError
 from .orchestration import ManagedWebhookPayloadError
 from .routes.assets import router as assets_router
 from .routes.auth import router as auth_router
@@ -43,7 +44,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ManagedGitHubClientError)
     async def handle_managed_github_error(_: Request, exc: ManagedGitHubClientError) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
+        # Upstream response bodies may contain private repository or user data.
+        return JSONResponse(status_code=502, content={"detail": "GitHub request failed. Please try again."})
+
+    @app.exception_handler(OAuthStateError)
+    async def handle_oauth_state_error(_: Request, exc: OAuthStateError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     return app
 
