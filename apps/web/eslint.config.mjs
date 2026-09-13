@@ -14,7 +14,16 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: [".next/**", "node_modules/**", "eslint.config.mjs", "next-env.d.ts"],
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "eslint.config.mjs",
+      "next-env.d.ts",
+      "public/**",
+      "interactive-renderer/build.mjs",
+      "playwright-report/**",
+      "test-results/**",
+    ],
   },
   ...compat.extends("next/core-web-vitals"),
   ...tseslint.configs.recommendedTypeChecked,

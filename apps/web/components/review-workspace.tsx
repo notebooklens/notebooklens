@@ -1,33 +1,40 @@
+"use client";
+
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-import {
-  createThreadAction,
-  logoutAction,
-  reopenThreadAction,
-  replyToThreadAction,
-  resolveThreadAction,
-} from "@/lib/actions";
-import {
-  buildApiHref,
-  buildLoginHref,
-} from "@/lib/api";
+import { buildApiHref, buildLoginHref } from "@/lib/public-hrefs";
+import { computeLineDiff, type DiffLine } from "@/lib/code-diff";
+import { buildSandboxedHtmlDocument } from "@/lib/html-output";
+import { InteractiveOutputFrame } from "@/components/interactive-output-frame";
+import { ThreadMutationForm } from "@/components/thread-mutation-form";
+import { WorkspaceTopbar } from "@/components/workspace-topbar";
+import { WorkspaceSettingsMenu } from "@/components/workspace-settings-menu";
 import {
   buildAnchorKey,
   buildAiGatewayRoute,
   buildSnapshotRoute,
+  buildWorkspaceActionPath,
   canStartThread,
   formatCellLabel,
+  formatOutputMimeLabel,
+  formatTextOutput,
+  getMeaningfulOutputItems,
+  getVisibleBlockKinds,
   groupThreadsByAnchor,
+  hasMeaningfulBlockContent,
   isBlockChanged,
   summarizeGitHubMirrorStatus,
-  summarizeFinding,
-  summarizeGuidance,
+  toggleThreadComposer,
 } from "@/lib/review-workspace";
 import type {
   FlashNotice,
   RenderRow,
+  RenderOutputItem,
   ReviewSnapshotRecord,
   ReviewThread,
   SnapshotBlockKind,
@@ -43,6 +50,10 @@ type ReviewWorkspaceProps = {
   flashNotice: FlashNotice | null;
 };
 
+const WORKSPACE_TOP_ID = "review-workspace-top";
+const SNAPSHOT_HISTORY_ID = "workspace-snapshot-history";
+const ViewPreferences = createContext({ showPrevious: true, showOutputs: true });
+const CommentDrafts = createContext<Map<string, string> | null>(null);
 
 export function ReviewWorkspace({
   workspace,
@@ -50,95 +61,235 @@ export function ReviewWorkspace({
   flashNotice,
 }: ReviewWorkspaceProps) {
   const snapshot = workspace.snapshot;
-  const threadsByAnchor = groupThreadsByAnchor(workspace.threads);
+  const commentDrafts = useRef(new Map<string, string>());
+  const [activeView, setActiveView] = useState<"changes" | "discussions">("changes");
+  const [showPrevious, setShowPrevious] = useState(true);
+  const [showOutputs, setShowOutputs] = useState(true);
+  const [discussionFilter, setDiscussionFilter] = useState<"all" | "open" | "resolved">("all");
+  const [changeIndex, setChangeIndex] = useState(-1);
+  const availableAnchors = new Set(snapshot?.status === "ready" ? snapshot.payload.review.notebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) => Object.values(row.thread_anchors).map(buildAnchorKey))) : []);
+  const unmatchedThreads = workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && (thread.anchor_drifted || !availableAnchors.has(buildAnchorKey(thread.anchor))));
+  const unmatchedIds = new Set(unmatchedThreads.map((thread) => thread.id));
+  const threadsByAnchor = groupThreadsByAnchor(workspace.threads.filter((thread) => thread.anchor.block_kind !== "metadata" && !unmatchedIds.has(thread.id)));
+  const [openComposerKey, setOpenComposerKey] = useState<string | null>(null);
+  const visibleNotebooks = snapshot?.status === "ready"
+    ? snapshot.payload.review.notebooks.filter(
+        (notebook) =>
+          notebook.notices.length > 0 ||
+          notebook.render_rows.some((row) => hasVisibleReviewBlocks(row, threadsByAnchor)),
+      )
+    : [];
+  const changeTargets = visibleNotebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) =>
+    (["source", "outputs"] as const).filter((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind) && row.thread_anchors[kind]).map((kind) => buildBlockSectionId(row.thread_anchors[kind])),
+  ));
+  const displayedAnchors = new Set(visibleNotebooks.flatMap((notebook) => notebook.render_rows.flatMap((row) => getReviewBlockKinds(row, threadsByAnchor).map((kind) => buildAnchorKey(row.thread_anchors[kind])))));
+  const navigateChange = (direction: number) => {
+    if (!changeTargets.length) return;
+    const index = changeIndex < 0 ? (direction < 0 ? changeTargets.length - 1 : 0) : (changeIndex + direction + changeTargets.length) % changeTargets.length;
+    setChangeIndex(index);
+    jumpToFragment(changeTargets[index], () => setActiveView("changes"));
+  };
+  const selectedSnapshotLabel =
+    snapshot === null
+      ? "No push selected"
+      : snapshot.snapshot_index === workspace.review.latest_snapshot_index
+        ? "Reviewing latest push"
+        : `Reviewing push ${snapshot.snapshot_index}`;
+  const reviewStatusLabel = formatReviewStatusLabel(workspace.review.status);
+
+  useEffect(() => {
+    setOpenComposerKey(null);
+    setChangeIndex(-1);
+    commentDrafts.current.clear();
+  }, [snapshot?.id]);
+
+  useEffect(() => {
+    const reveal = () => {
+      const target = document.getElementById(window.location.hash.slice(1));
+      if (!target) return;
+      if (target.closest("[data-review-changes]")) setActiveView("changes");
+      if (target.closest(".discussion-index")) { setActiveView("discussions"); setDiscussionFilter("all"); }
+      revealFragment(target.id);
+      focusFragment(target.id);
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [snapshot?.id, workspace.threads]);
 
   return (
-    <div className="workspace-shell">
-      <header className="hero-card">
-        <div className="hero-copy">
-          <p className="eyebrow">NotebookLens Review Workspace</p>
-          <h1>
-            {workspace.review.owner}/{workspace.review.repo} PR #
-            {workspace.review.pull_number}
-          </h1>
-          <p className="hero-summary">
-            Review the latest normalized notebook snapshot, switch across prior
-            revisions, and keep discussion anchored to specific changed notebook
-            blocks.
+    <CommentDrafts.Provider value={commentDrafts.current}><ViewPreferences.Provider value={{ showPrevious, showOutputs }}><div className="workspace-shell notebook-document-workspace" id={WORKSPACE_TOP_ID} onClick={(event) => {
+      const link = (event.target as Element).closest("a[href^='#']");
+      const fragment = link?.getAttribute("href")?.slice(1);
+      if (fragment) {
+        if (document.getElementById(fragment)?.closest("[data-review-changes]")) setActiveView("changes");
+        revealFragment(fragment);
+      }
+    }}>
+      <WorkspaceTopbar skipHref={activeView === "changes" ? "#review-changes" : "#review-discussions"}>
+        <WorkspaceSettingsMenu authState="authenticated" returnTo="/" loginHref={buildLoginHref(currentPath)} aiSettingsHref={buildAiGatewayRoute(workspace.review.owner, workspace.review.repo, workspace.review.pull_number)} />
+      </WorkspaceTopbar>
+      <header className="summary-card workspace-pr-strip">
+        <div className="workspace-pr-strip-main">
+          <p className="workspace-breadcrumb">
+            NotebookLens review workspace
           </p>
-          <div className="hero-meta">
-            <StatusPill label={`Review ${workspace.review.status}`} tone="default" />
-            <StatusPill
-              label={`${workspace.review.thread_counts.unresolved} open`}
-              tone="accent"
-            />
-            <StatusPill
-              label={`${workspace.review.thread_counts.resolved} resolved`}
-              tone="success"
-            />
-            <StatusPill
-              label={`${workspace.review.thread_counts.outdated} outdated`}
-              tone="warning"
-            />
+          <div className="workspace-pr-strip-head">
+            <h1 className="workspace-title workspace-title-compact">
+              {workspace.review.owner}/{workspace.review.repo}
+            </h1>
+            <span className="workspace-pr-number">
+              PR #{workspace.review.pull_number}
+            </span>
           </div>
         </div>
-        <div className="hero-actions">
-          <Link
-            className="secondary-button"
-            href={
-              buildAiGatewayRoute(
-                workspace.review.owner,
-                workspace.review.repo,
-                workspace.review.pull_number,
-              ) as Route
-            }
-          >
-            LiteLLM settings
-          </Link>
-          <a className="secondary-button" href={buildLoginHref(currentPath)}>
-            Refresh access
-          </a>
-          <form action={logoutAction}>
-            <input name="returnTo" type="hidden" value={currentPath} />
-            <button className="ghost-button" type="submit">
-              Sign out
-            </button>
-          </form>
+        <div className="workspace-pr-strip-meta">
+          <p className="workspace-strip-caption workspace-strip-caption-inline">
+            {reviewStatusLabel} · {selectedSnapshotLabel} · {workspace.review.thread_counts.unresolved} open
+          </p>
         </div>
       </header>
 
       {flashNotice ? (
-        <div className={`flash-banner flash-${flashNotice.tone}`}>
+        <div role="status" className={`flash-banner flash-${flashNotice.tone}`}>
           {flashNotice.message}
         </div>
       ) : null}
 
-      <div className="workspace-grid">
-        <main className="workspace-main">
-          {snapshot ? (
-            <SnapshotOverview review={workspace.review} snapshot={snapshot} />
-          ) : (
+      <nav className="review-toolbar" aria-label="Review views">
+        <button
+          type="button"
+          aria-pressed={activeView === "changes"}
+          onClick={() => setActiveView("changes")}
+        >
+          Changes
+        </button>
+        <button
+          type="button"
+          aria-pressed={activeView === "discussions"}
+          onClick={() => setActiveView("discussions")}
+        >
+          Discussions ({workspace.threads.length})
+        </button>
+        <div className="review-task-controls" hidden={activeView !== "changes"}>
+          <label className="notebook-select-label">
+            <span className="sr-only">Notebook</span>
+            <select
+              aria-label="Notebook"
+              defaultValue=""
+              onChange={(event) => {
+                if (event.target.value) jumpToFragment(event.target.value, () => setActiveView("changes"));
+              }}
+            >
+              <option value="" disabled>Notebooks ({visibleNotebooks.length})</option>
+              {visibleNotebooks.map((notebook) => (
+                <option key={notebook.path} value={buildNotebookSectionId(notebook.path)}>
+                  {notebook.path}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!changeTargets.length}
+            title={!changeTargets.length ? "No changed code or outputs" : "Previous changed block"}
+            onClick={() => navigateChange(-1)}
+          >
+            Previous change
+          </button>
+          <button
+            type="button"
+            disabled={!changeTargets.length}
+            title={!changeTargets.length ? "No changed code or outputs" : "Next changed block"}
+            onClick={() => navigateChange(1)}
+          >
+            Next change
+          </button>
+          <WorkspaceMenu label="View options">
+            <label><input type="checkbox" checked={showPrevious} onChange={(event) => setShowPrevious(event.target.checked)} /> Show previous version</label>
+            <label><input type="checkbox" checked={showOutputs} onChange={(event) => setShowOutputs(event.target.checked)} /> Show outputs</label>
+          </WorkspaceMenu>
+        </div>
+        <div className="review-task-controls" hidden={activeView !== "discussions"} aria-label="Filter discussions">
+          {(["all", "open", "resolved"] as const).map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              aria-pressed={discussionFilter === filter}
+              onClick={() => setDiscussionFilter(filter)}
+            >
+              {filter === "all" ? "All" : filter === "open" ? "Open" : "Resolved"}
+            </button>
+          ))}
+        </div>
+        <div className="review-version-controls">
+          {snapshot ? <PushDetails review={workspace.review} snapshot={snapshot} /> : null}
+          <SnapshotHistoryRailCard review={workspace.review} />
+        </div>
+      </nav>
+      {snapshot ? (
+        <SnapshotOverview review={workspace.review} snapshot={snapshot} visibleNotebooks={visibleNotebooks} />
+      ) : null}
+      <main id="review-discussions" tabIndex={-1} hidden={activeView !== "discussions"} className="discussion-index" aria-label="Review discussions">
+        <h2>Discussions on this push</h2>
+        {workspace.threads.length ? workspace.threads.map((thread) => (
+          <article
+            hidden={discussionFilter !== "all" && thread.status !== discussionFilter}
+            key={thread.id}
+          >
+            <p className="discussion-context">
+              {thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}
+              {thread.anchor_drifted || unmatchedIds.has(thread.id) ? " · Original anchor; not matched on this push" : ""}
+            </p>
+            {!thread.anchor_drifted &&
+              displayedAnchors.has(buildAnchorKey(thread.anchor)) &&
+              thread.anchor.block_kind !== "metadata" ? (
+                <a
+                  className="text-link discussion-context-link"
+                  href={`#${buildBlockSectionId(thread.anchor)}`}
+                  onClick={() => setActiveView("changes")}
+                >
+                  View in notebook
+                </a>
+              ) : <OriginalDiscussionLink thread={thread} review={workspace.review} />}
+            <DiscussionPreview thread={thread} notebooks={visibleNotebooks} />
+            <ThreadCard thread={thread} currentPath={currentPath} surface="index" />
+          </article>
+        )) : <p>No discussions yet. Start one beside a cell in Changes.</p>}
+        {workspace.threads.length > 0 &&
+          !workspace.threads.some((thread) => discussionFilter === "all" || thread.status === discussionFilter) ? (
+            <p>No {discussionFilter} discussions on this push.</p>
+          ) : null}
+      </main><div hidden={activeView !== "changes"} data-review-changes className="workspace-grid">
+        <main id="review-changes" tabIndex={-1} className="workspace-main">
+          {!snapshot ? (
             <EmptyState
-              title="No review snapshot is available yet"
-              description="The managed review exists, but there is not a selected snapshot to render."
+              title="This review is not ready yet"
+              description="Open the PR check run again after NotebookLens finishes loading the latest push."
             />
-          )}
+          ) : null}
 
           {snapshot?.status === "failed" ? (
             <EmptyState
-              title="Snapshot build failed"
-              description={snapshot.failure_reason ?? "NotebookLens could not build this snapshot."}
+              title="NotebookLens could not prepare this review"
+              description={snapshot.failure_reason ?? "Try reopening the PR check run after the latest push finishes."}
             />
           ) : null}
 
           {snapshot?.status === "ready" &&
-          snapshot.payload.review.notebooks.length > 0 ? (
+          visibleNotebooks.length > 0 ? (
             <section className="notebook-stack">
-              {snapshot.payload.review.notebooks.map((notebook) => (
+              {visibleNotebooks.map((notebook) => (
                 <NotebookCard
                   currentPath={currentPath}
                   key={`${notebook.path}-${snapshot.id}`}
                   notebook={notebook}
+                  onToggleComposer={(composerKey) => {
+                    setOpenComposerKey((currentComposerKey) =>
+                      toggleThreadComposer(currentComposerKey, composerKey),
+                    );
+                  }}
+                  openComposerKey={openComposerKey}
                   reviewId={workspace.review.id}
                   review={workspace.review}
                   snapshot={snapshot}
@@ -149,153 +300,107 @@ export function ReviewWorkspace({
           ) : null}
 
           {snapshot?.status === "ready" &&
-          snapshot.payload.review.notebooks.length === 0 ? (
+          visibleNotebooks.length === 0 ? (
             <EmptyState
-              title="No notebook diffs in this snapshot"
-              description="NotebookLens did not persist any notebook-aware render rows for the selected revision."
+              title="No code or output changes on this push"
+              description="Existing conversations remain available in Discussions. Choose another push to compare a different update."
             />
+          ) : null}
+          {unmatchedThreads.length ? (
+            <section className="summary-card" aria-label="Discussions needing anchor review">
+              <h2>Discussions needing anchor review ({unmatchedThreads.length})</h2>
+              <p>These discussions could not be confidently placed on this push. Their original context is preserved below.</p>
+              {unmatchedThreads.map((thread) => <div key={thread.id}><p>{thread.anchor.notebook_path} · {formatThreadAnchorSummary(thread.anchor)}</p><ThreadCard currentPath={currentPath} thread={thread} /></div>)}
+            </section>
           ) : null}
         </main>
 
-        <aside className="workspace-sidebar">
-          <section className="side-card">
-            <h2>Snapshot History</h2>
-            <div className="history-list">
-              {workspace.review.snapshot_history
-                .slice()
-                .reverse()
-                .map((entry) => {
-                  const href = entry.is_latest
-                    ? buildSnapshotRoute(
-                        workspace.review.owner,
-                        workspace.review.repo,
-                        workspace.review.pull_number,
-                        null,
-                      )
-                    : buildSnapshotRoute(
-                        workspace.review.owner,
-                        workspace.review.repo,
-                        workspace.review.pull_number,
-                        entry.snapshot_index,
-                      );
-
-                  return (
-                    <Link
-                      className={`history-link ${
-                        workspace.review.selected_snapshot_index === entry.snapshot_index
-                          ? "history-link-active"
-                          : ""
-                      }`}
-                      href={href as Route}
-                      key={entry.id}
-                    >
-                      <span>
-                        Snapshot {entry.snapshot_index}
-                        {entry.is_latest ? " latest" : ""}
-                      </span>
-                      <span className="history-caption">{entry.head_sha.slice(0, 12)}</span>
-                    </Link>
-                  );
-                })}
-            </div>
-          </section>
-
-          <section className="side-card">
-            <h2>Review Notes</h2>
-            {snapshot?.payload.review.notices?.length ? (
-              <ul className="chip-list">
-                {snapshot.payload.review.notices.map((notice) => (
-                  <li className="chip-item" key={notice}>
-                    {notice}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-copy">No global notices on this snapshot.</p>
-            )}
-          </section>
-
-          <section className="side-card">
-            <h2>Flagged Findings</h2>
-            {snapshot?.flagged_findings?.length ? (
-              <ul className="text-list">
-                {snapshot.flagged_findings.map((finding, index) => (
-                  <li key={`${finding.code ?? "finding"}-${index}`}>
-                    {summarizeFinding(finding)}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-copy">No deterministic findings were recorded.</p>
-            )}
-          </section>
-
-          <section className="side-card">
-            <h2>Reviewer Guidance</h2>
-            {snapshot?.reviewer_guidance?.length ? (
-              <ul className="text-list">
-                {snapshot.reviewer_guidance.map((guidance, index) => (
-                  <li key={`${guidance.label ?? "guidance"}-${index}`}>
-                    {summarizeGuidance(guidance)}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-copy">No reviewer guidance matched this snapshot.</p>
-            )}
-          </section>
-        </aside>
       </div>
-    </div>
+    </div></ViewPreferences.Provider></CommentDrafts.Provider>
   );
+}
+
+// Native disclosures keep links/forms keyboard-operable without pretending to
+// implement an ARIA application menu. Panels do not unmount notebook drafts.
+function WorkspaceMenu({ label, children, align = "start", id }: {
+  label: ReactNode;
+  children: ReactNode;
+  align?: "start" | "end";
+  id?: string;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent | FocusEvent) => {
+      if (event.target instanceof Node && !ref.current?.contains(event.target) && ref.current) ref.current.open = false;
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("focusin", closeOutside);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("focusin", closeOutside);
+    };
+  }, []);
+  return <details ref={ref} id={id} className={`workspace-menu workspace-menu-${align}`} onKeyDown={(event) => {
+    if (event.key === "Escape" && ref.current?.open) {
+      event.preventDefault();
+      ref.current.open = false;
+      ref.current.querySelector("summary")?.focus();
+    }
+  }} onClick={(event) => {
+    if ((event.target as Element).closest("a, button") && ref.current) ref.current.open = false;
+    const href = (event.target as Element).closest("a")?.getAttribute("href");
+    if (href?.startsWith("#")) focusFragment(href.slice(1));
+  }}>
+    <summary>{label}</summary>
+    <div className="workspace-menu-panel">{children}</div>
+  </details>;
 }
 
 
 type SnapshotOverviewProps = {
+  visibleNotebooks: SnapshotNotebook[];
   review: WorkspacePayload["review"];
   snapshot: ReviewSnapshotRecord;
 };
 
 
-function SnapshotOverview({ review, snapshot }: SnapshotOverviewProps) {
+function SnapshotOverview({ snapshot, visibleNotebooks }: SnapshotOverviewProps) {
+  const changedRows = visibleNotebooks.map((notebook) => notebook.render_rows.filter((row) => (["source", "outputs"] as const).some((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind))));
+  const changedNotebookCount = changedRows.filter((rows) => rows.length > 0).length;
+  const changedCellCount = changedRows.reduce((count, rows) => count + rows.length, 0);
+
   return (
-    <section className="summary-card">
-      <div className="summary-head">
+    <section className="summary-card snapshot-overview-card">
+      <div className="summary-head snapshot-overview-head">
         <div>
-          <p className="eyebrow">Selected Snapshot</p>
-          <h2>Snapshot {snapshot.snapshot_index}</h2>
+          <p className="summary-text snapshot-summary-kicker">
+            Push {snapshot.snapshot_index} ·{" "}
+            {changedNotebookCount} notebook{changedNotebookCount === 1 ? "" : "s"} with code/output changes ·{" "}
+            {changedCellCount} changed cell
+            {changedCellCount === 1 ? "" : "s"}
+          </p>
         </div>
-        <StatusPill label={snapshot.status} tone={snapshot.status === "failed" ? "danger" : "default"} />
-      </div>
-      <div className="summary-grid">
-        <div className="summary-metric">
-          <span className="summary-label">Base branch</span>
-          <strong>{review.base_branch}</strong>
-        </div>
-        <div className="summary-metric">
-          <span className="summary-label">Base SHA</span>
-          <strong>{snapshot.base_sha.slice(0, 12)}</strong>
-        </div>
-        <div className="summary-metric">
-          <span className="summary-label">Head SHA</span>
-          <strong>{snapshot.head_sha.slice(0, 12)}</strong>
-        </div>
-        <div className="summary-metric">
-          <span className="summary-label">Notebooks</span>
-          <strong>{snapshot.notebook_count}</strong>
-        </div>
-        <div className="summary-metric">
-          <span className="summary-label">Changed cells</span>
-          <strong>{snapshot.changed_cell_count}</strong>
-        </div>
+        {snapshot.status !== "ready" ? <span>{formatSnapshotStatusLabel(snapshot.status)}</span> : null}
       </div>
       {snapshot.summary_text ? (
-        <p className="summary-text">{snapshot.summary_text}</p>
+        <p className="summary-text snapshot-summary-text">{snapshot.summary_text}</p>
       ) : null}
+      {snapshot.payload.review.notices.map((notice) => (
+        <p className="muted-copy" role="note" key={notice}>{notice}</p>
+      ))}
     </section>
   );
 }
 
+
+function PushDetails({ review, snapshot }: { review: WorkspacePayload["review"]; snapshot: ReviewSnapshotRecord }) {
+  return <WorkspaceMenu label="Push details" align="end"><h2>Push {snapshot.snapshot_index}</h2><dl className="push-detail-list">
+    <dt>Saved</dt><dd>{formatTimestamp(snapshot.created_at)}</dd>
+    <dt>Base</dt><dd>{review.base_branch} · <code>{snapshot.base_sha.slice(0, 12)}</code></dd>
+    <dt>Head</dt><dd><code>{snapshot.head_sha.slice(0, 12)}</code></dd>
+    <dt>Discussions</dt><dd>{review.thread_counts.unresolved} open · {review.thread_counts.resolved} resolved in NotebookLens</dd>
+  </dl></WorkspaceMenu>;
+}
 
 type NotebookCardProps = {
   review: WorkspacePayload["review"];
@@ -304,6 +409,8 @@ type NotebookCardProps = {
   notebook: SnapshotNotebook;
   threadsByAnchor: Map<string, ReviewThread[]>;
   currentPath: string;
+  openComposerKey: string | null;
+  onToggleComposer: (composerKey: string) => void;
 };
 
 
@@ -314,33 +421,69 @@ function NotebookCard({
   notebook,
   threadsByAnchor,
   currentPath,
+  openComposerKey,
+  onToggleComposer,
 }: NotebookCardProps) {
+  const [directoryLabel, fileLabel] = splitNotebookPath(notebook.path);
+  const notebookThreads = getThreadsForNotebook(notebook, threadsByAnchor);
+  const openThreadCount = notebookThreads.filter((thread) => thread.status === "open").length;
+  const visibleRows = notebook.render_rows.filter((row) => hasVisibleReviewBlocks(row, threadsByAnchor));
+  const notebookSectionId = buildNotebookSectionId(notebook.path);
+  const notebookReviewSummary = buildNotebookReviewSummary({
+    firstVisibleRow: visibleRows[0] ?? null,
+    reviewItemCount: visibleRows.length,
+    noticeCount: notebook.notices.length,
+    openThreadCount,
+  });
+  const notebookNotesLabel = `${notebook.notices.length} notebook ${pluralize(
+    notebook.notices.length,
+    "note",
+  )}`;
+
   return (
-    <section className="notebook-card">
-      <div className="notebook-head">
+    <details open className="notebook-card notebook-card-flat" id={notebookSectionId}>
+      <summary className="notebook-head">
         <div>
-          <p className="eyebrow">Notebook Diff</p>
-          <h2>{notebook.path}</h2>
+          <h2>{fileLabel}</h2>
+          <p className="notebook-subpath">{directoryLabel}</p>
         </div>
-        <StatusPill label={notebook.change_type} tone="default" />
-      </div>
+        <StatusPill label={formatChangeTypeLabel(notebook.change_type)} tone={outputChangeTone(notebook.change_type)} />
+      </summary>
+
+      <p className="notebook-review-summary">{notebookReviewSummary}</p>
 
       {notebook.notices.length ? (
-        <ul className="chip-list">
-          {notebook.notices.map((notice) => (
-            <li className="chip-item" key={notice}>
-              {notice}
-            </li>
-          ))}
-        </ul>
+        <details className="notebook-summary-card">
+          <summary className="notebook-summary-toggle">
+            <span>
+              <strong>Notebook notes</strong>
+              <span className="history-caption notebook-jump-summary-copy">
+                {notebookNotesLabel}
+              </span>
+            </span>
+            <span className="muted-copy">Open only if needed</span>
+          </summary>
+          <div className="notebook-summary-panel">
+            <div className="notebook-summary-section">
+              <ul className="chip-list">
+                {notebook.notices.map((notice) => (
+                  <li className="chip-item" key={notice}>
+                    {notice}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </details>
       ) : null}
 
       <div className="row-stack">
-        {notebook.render_rows.map((row) => (
+        {visibleRows.map((row) => (
           <CellRowCard
             currentPath={currentPath}
             key={`${notebook.path}-${buildAnchorKey(row.thread_anchors.source)}`}
-            notebookPath={notebook.path}
+            onToggleComposer={onToggleComposer}
+            openComposerKey={openComposerKey}
             review={review}
             reviewId={reviewId}
             row={row}
@@ -349,7 +492,7 @@ function NotebookCard({
           />
         ))}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -359,9 +502,10 @@ type CellRowCardProps = {
   reviewId: string;
   snapshot: ReviewSnapshotRecord;
   row: RenderRow;
-  notebookPath: string;
   threadsByAnchor: Map<string, ReviewThread[]>;
   currentPath: string;
+  openComposerKey: string | null;
+  onToggleComposer: (composerKey: string) => void;
 };
 
 
@@ -370,68 +514,64 @@ function CellRowCard({
   reviewId,
   snapshot,
   row,
-  notebookPath,
   threadsByAnchor,
   currentPath,
+  openComposerKey,
+  onToggleComposer,
 }: CellRowCardProps) {
-  const blocks: SnapshotBlockKind[] = ["source", "outputs", "metadata"].filter(
-    (blockKind) =>
-      isBlockChanged(row, blockKind as SnapshotBlockKind) ||
-      (threadsByAnchor.get(buildAnchorKey(row.thread_anchors[blockKind as SnapshotBlockKind]))?.length ?? 0) > 0,
-  ) as SnapshotBlockKind[];
+  const blocks = getReviewBlockKinds(row, threadsByAnchor);
 
   return (
-    <article className="cell-card">
-      <div className="cell-card-head">
-        <div>
-          <p className="eyebrow">{formatCellLabel(row)}</p>
-          <h3>
-            {row.cell_type} cell · {row.change_type}
-          </h3>
+    <article className="cell-card cell-card-flat">
+      <div className="cell-card-head cell-card-head-compact">
+        <h3 className="cell-row-heading">
+          <span>{formatCellLabel(row)}</span>
+          <span className="cell-row-heading-divider">·</span>
+          <span className="cell-row-heading-detail">{formatCellTypeLabel(row.cell_type)}</span>
+        </h3>
+        <div className="cell-card-meta cell-card-meta-inline">
+          <StatusPill label={formatRowChangeLabel(row.change_type)} tone={outputChangeTone(row.change_type)} />
+          {row.change_type === "moved" && row.locator.base_index !== null && row.locator.head_index !== null ? <span>Cell {row.locator.base_index + 1} → {row.locator.head_index + 1}</span> : null}
         </div>
-        <p className="cell-summary">{row.summary}</p>
       </div>
-
-      {row.review_context.length ? (
-        <div className="context-strip">
-          {row.review_context.map((context, index) => (
-            <span className="context-pill" key={`${context.relative_position}-${index}`}>
-              {context.relative_position}: {context.summary}
-            </span>
-          ))}
-        </div>
-      ) : null}
 
       <div className="block-stack">
         {blocks.map((blockKind) => {
+          const blockLabel = blockKind === "source" && row.cell_type === "markdown" ? "Markdown" : blockTitle(blockKind);
           const anchor = row.thread_anchors[blockKind];
+          const composerKey = buildAnchorKey(anchor);
+          const composerId = buildThreadComposerId(anchor);
+          const composerOpen = openComposerKey === composerKey;
           const threads = threadsByAnchor.get(buildAnchorKey(anchor)) ?? [];
           const threadable = canStartThread(review, snapshot, row, blockKind);
 
-          return (
-            <section className="diff-block" key={blockKind}>
-              <div className="diff-block-head">
-                <div>
-                  <p className="eyebrow">Inline Discussion</p>
-                  <h4>{blockTitle(blockKind)}</h4>
-                </div>
-                <div className="diff-block-meta">
-                  {isBlockChanged(row, blockKind) ? (
-                    <StatusPill label="changed" tone="accent" />
-                  ) : (
-                    <StatusPill label="thread only" tone="default" />
-                  )}
-                  {threads.length ? (
-                    <StatusPill label={`${threads.length} thread${threads.length === 1 ? "" : "s"}`} tone="default" />
-                  ) : null}
-                </div>
-              </div>
-
+          const content = (
+            <section
+              className="diff-block diff-block-flat"
+              id={buildBlockSectionId(anchor)}
+              key={blockKind}
+            >
+              <h4 className="sr-only">{blockLabel}</h4>
+              {threadable ? (
+                <button
+                  aria-label={`Add comment on ${formatCellLabel(row)} ${blockLabel.toLowerCase()}`}
+                  aria-controls={composerId}
+                  aria-expanded={composerOpen}
+                  className={`${composerOpen ? "secondary-button" : "ghost-button"} thread-affordance-button`}
+                  onClick={() => onToggleComposer(composerKey)}
+                  type="button"
+                >
+                  {composerOpen ? "−" : "+"}
+                </button>
+              ) : null}
               <BlockContent blockKind={blockKind} row={row} />
-
+              {threads.length ? <span className="block-thread-count">{threads.length} thread{threads.length === 1 ? "" : "s"}</span> : null}
               <ThreadColumn
                 anchor={anchor}
-                currentPath={currentPath}
+                composerId={composerId}
+                composerOpen={composerOpen}
+                currentPath={`${currentPath.split("#")[0]}#${buildBlockSectionId(anchor)}`}
+                onCancelComposer={() => onToggleComposer(composerKey)}
                 reviewId={reviewId}
                 snapshotId={snapshot.id}
                 threadable={threadable}
@@ -439,10 +579,9 @@ function CellRowCard({
               />
             </section>
           );
+          return content;
         })}
       </div>
-
-      <p className="notebook-path-caption">{notebookPath}</p>
     </article>
   );
 }
@@ -455,53 +594,102 @@ function BlockContent({
   blockKind: SnapshotBlockKind;
   row: RenderRow;
 }) {
+  const { showPrevious, showOutputs } = useContext(ViewPreferences);
+  const removed = row.change_type === "deleted" || row.change_type === "removed";
+  if (!hasMeaningfulBlockContent(row, blockKind)) {
+    return null;
+  }
+
   if (blockKind === "source") {
+    if (row.change_type === "added" || removed || !showPrevious) {
+      const value = removed ? row.source.base : row.source.head;
+      const label = removed ? "Removed cell" : row.change_type === "added" ? "Added cell" : "Current version";
+      const singleDiff = computeLineDiff(row.source.base, row.source.head);
+      const lines = row.change_type === "added" || removed ? value?.split("\n").map((content, index) => ({ content, lineNumber: index + 1, status: removed ? "removed" as const : "added" as const })) : singleDiff.headLines;
+      return row.cell_type === "markdown" ? <MarkdownPane label={label} value={value} change={removed ? "removed" : row.change_type === "added" ? "added" : undefined} /> : <>{!singleDiff.bounded && row.change_type !== "added" && !removed ? <p role="note">Large cell: showing full source without computed change highlighting.</p> : null}<CodePane label={label} value={value} diffLines={lines} /></>;
+    }
+    if (row.cell_type === "markdown") {
+      return (
+        <div className="code-grid">
+          <MarkdownPane label="Before" value={row.source.base} />
+          <MarkdownPane label="After" value={row.source.head} />
+        </div>
+      );
+    }
+    const lineDiff = computeLineDiff(row.source.base, row.source.head);
     return (
-      <div className="code-grid">
-        <CodePane label="Base source" value={row.source.base} />
-        <CodePane label="Head source" value={row.source.head} />
-      </div>
+      <>
+        {!lineDiff.bounded ? <p role="note">Large cell: showing full source without computed change highlighting. Rows are positioned for reading, not matched changes.</p> : null}
+        <div className="code-grid aligned-code-grid">
+          <CodePane diffLines={lineDiff.alignedRows.map((line) => line.base)} label="Before" value={row.source.base} />
+          <CodePane diffLines={lineDiff.alignedRows.map((line) => line.head)} label="After" value={row.source.head} />
+        </div>
+      </>
     );
   }
 
   if (blockKind === "outputs") {
+    const outputItems = getMeaningfulOutputItems(row);
+    if (row.change_type === "added" || removed) {
+      const side = removed ? "base" : "head";
+      return <>{!showOutputs ? <p className="muted-copy">Outputs hidden. Enable Show outputs to inspect them; discussions remain below.</p> : null}<div hidden={!showOutputs} className="output-list">{outputItems.filter((item) => !item.side || item.side === side).map((item, index) => <OutputItemCard key={`${item.kind}-${index}`} item={item} />)}</div></>;
+    }
+
     return (
-      <div className="output-list">
-        {row.outputs.items.length ? (
-          row.outputs.items.map((item, index) => (
-            item.kind === "image" ? (
-              <ImageOutputCard item={item} key={`${item.asset_id}-${index}`} />
-            ) : (
-              <article className="output-card" key={`${item.output_type}-${index}`}>
-                <div className="output-head">
-                  <strong>{item.output_type}</strong>
-                  <div className="output-meta">
-                    <span>{item.mime_group}</span>
-                    <StatusPill
-                      label={item.change_type}
-                      tone={outputChangeTone(item.change_type)}
-                    />
-                  </div>
-                </div>
-                <p>{item.summary}</p>
-                {item.truncated ? (
-                  <span className="muted-copy">Output summary truncated</span>
-                ) : null}
-              </article>
-            )
-          ))
-        ) : (
-          <p className="muted-copy">No output summaries were captured for this block.</p>
-        )}
-      </div>
+      <>{!showOutputs ? <p className="muted-copy">Outputs hidden. Enable Show outputs to inspect them; discussions remain below.</p> : null}<div hidden={!showOutputs} className="output-comparison">
+        {outputItems.some((item) => item.side) ? <div className={`output-side-grid${showPrevious ? "" : " output-current-only"}`}>{(["base", "head"] as const).map((side) => (
+          <section hidden={side === "base" && !showPrevious} className="output-side" key={side} aria-label={`${side === "base" ? "Before" : "After"} outputs`}>
+            <h5 className="sr-only">{side === "base" ? "Before" : "After"}</h5>
+            {outputItems.filter((item) => item.side === side).length ? outputItems.filter((item) => item.side === side).map((item, index) => <OutputItemCard item={item} key={`${item.kind}-${index}`} />) : <p className="muted-copy">No saved output on this side.</p>}
+          </section>
+        ))}</div> : null}
+        {outputItems.some((item) => !item.side) ? <section className="output-list" aria-label="Outputs without comparison side"><h5 className="sr-only">Saved outputs · comparison side unavailable</h5>{outputItems.filter((item) => !item.side).map((item, index) => <OutputItemCard item={item} key={`${item.kind}-${index}`} />)}</section> : null}
+      </div></>
     );
   }
 
+  return null;
+}
+
+
+function OutputItemCard({ item }: { item: RenderOutputItem }) {
+  if (item.kind === "image") {
+    return <ImageOutputCard item={item} />;
+  }
+  if (item.kind === "text") {
+    return <TextOutputCard item={item} />;
+  }
+  if (item.kind === "html") {
+    return <HtmlOutputCard item={item} />;
+  }
+  if (item.kind === "plotly") {
+    return <PlotlyOutputCard item={item} />;
+  }
+  if (item.kind === "widget") {
+    return <WidgetOutputCard item={item} />;
+  }
   return (
-    <div className="metadata-card">
-      <p>{row.metadata.summary ?? "Notebook metadata changed."}</p>
-    </div>
+    <article className="output-card">
+      <div className="output-head">
+        <strong>{item.output_type}</strong>
+        <div className="output-meta">
+          <OutputSideBadge side={item.side} />
+          <span>{item.mime_group}</span>
+          <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
+        </div>
+      </div>
+      <p>{item.summary}</p>
+      {item.truncated ? <span className="muted-copy">Output summary truncated</span> : null}
+    </article>
   );
+}
+
+
+function OutputSideBadge({ side }: { side?: "base" | "head" }) {
+  if (!side) {
+    return <span className="output-side-label">Comparison side unavailable</span>;
+  }
+  return <span className="output-side-label">{side === "base" ? "Before" : "After"}</span>;
 }
 
 
@@ -515,6 +703,7 @@ function ImageOutputCard({
       <div className="output-head">
         <strong>Notebook image output</strong>
         <div className="output-meta">
+          <OutputSideBadge side={item.side} />
           <span>{item.mime_type}</span>
           <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
         </div>
@@ -540,17 +729,154 @@ function ImageOutputCard({
 }
 
 
+function TextOutputCard({
+  item,
+}: {
+  item: Extract<RenderRow["outputs"]["items"][number], { kind: "text" }>;
+}) {
+  const pretty = formatTextOutput(item.text, item.mime_type);
+
+  return (
+    <article className="output-card text-output-card">
+      <div className="output-head">
+        <strong>{formatOutputMimeLabel(item.mime_type)} output</strong>
+        <div className="output-meta">
+          <OutputSideBadge side={item.side} />
+          <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
+        </div>
+      </div>
+      <pre className="output-text-pane">{pretty}</pre>
+      {item.truncated ? <span className="muted-copy">Output text truncated</span> : null}
+    </article>
+  );
+}
+
+
+function HtmlOutputCard({
+  item,
+}: {
+  item: Extract<RenderRow["outputs"]["items"][number], { kind: "html" }>;
+}) {
+  const srcDoc = buildSandboxedHtmlDocument(item.html);
+
+  return (
+    <article className="output-card html-output-card">
+      <div className="output-head">
+        <strong>HTML output</strong>
+        <div className="output-meta">
+          <OutputSideBadge side={item.side} />
+          <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
+        </div>
+      </div>
+      <iframe
+        className="html-output-frame"
+        referrerPolicy="no-referrer"
+        sandbox=""
+        srcDoc={srcDoc}
+        title="Notebook HTML output"
+      />
+      {item.truncated ? <span className="muted-copy">Output HTML truncated</span> : null}
+    </article>
+  );
+}
+
+
+function PlotlyOutputCard({
+  item,
+}: {
+  item: Extract<RenderRow["outputs"]["items"][number], { kind: "plotly" }>;
+}) {
+  return (
+    <article className="output-card plotly-output-card">
+      <div className="output-head">
+        <strong>Plotly figure</strong>
+        <div className="output-meta">
+          <OutputSideBadge side={item.side} />
+          <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
+        </div>
+      </div>
+      <InteractiveOutputFrame item={item} />
+    </article>
+  );
+}
+
+
+function WidgetOutputCard({
+  item,
+}: {
+  item: Extract<RenderRow["outputs"]["items"][number], { kind: "widget" }>;
+}) {
+  return (
+    <article className="output-card widget-output-card">
+      <div className="output-head">
+        <strong>Saved widget</strong>
+        <div className="output-meta">
+          <OutputSideBadge side={item.side} />
+          <StatusPill label={item.change_type} tone={outputChangeTone(item.change_type)} />
+        </div>
+      </div>
+      <InteractiveOutputFrame item={item} />
+    </article>
+  );
+}
+
+
 function CodePane({
   label,
   value,
+  diffLines,
 }: {
   label: string;
   value: string | null;
+  diffLines?: (DiffLine | null)[];
 }) {
+  const labelClass = label === "Added cell" || label === "Removed cell" ? "sr-only" : "code-pane-label";
+  if ((!value || value.length === 0) && !diffLines?.length) {
+    return (
+      <div className="code-pane">
+        <span className={labelClass}>{label}</span>
+        <pre>{value === null ? "Cell not present on this side." : "Empty source."}</pre>
+      </div>
+    );
+  }
+
   return (
     <div className="code-pane">
-      <span className="code-pane-label">{label}</span>
-      <pre>{value && value.length > 0 ? value : "No source on this side."}</pre>
+      <span className={labelClass}>{label}</span>
+      <pre className="code-pane-diff">
+        {(diffLines ?? []).map((line, index) => (
+          <span className={`code-diff-line code-diff-line-${line?.status ?? "placeholder"}`} key={index}>
+            <span className="code-diff-line-number">{line?.lineNumber ?? " "}</span>
+            <span className="code-diff-line-marker" aria-label={line?.status === "added" ? "Added" : line?.status === "removed" ? "Removed" : undefined}>{line?.status === "added" ? "+" : line?.status === "removed" ? "−" : " "}</span>
+            <span className="code-diff-line-content">{line?.content || " "}</span>
+          </span>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+
+function MarkdownPane({
+  label,
+  value,
+  change,
+}: {
+  label: string;
+  value: string | null;
+  change?: "added" | "removed";
+}) {
+  return (
+    <div className={`code-pane markdown-pane${change ? ` markdown-pane-${change}` : ""}`}>
+      {change ? <span className="markdown-change-marker" aria-hidden="true">{change === "added" ? "+" : "−"}</span> : null}
+      <span className={change ? "sr-only" : "code-pane-label"}>{label}</span>
+      {value && value.length > 0 ? (
+        <div className="markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+        </div>
+      ) : (
+        <p className="muted-copy">{value === null ? "Cell not present on this side." : "Empty source."}</p>
+      )}
     </div>
   );
 }
@@ -563,6 +889,9 @@ type ThreadColumnProps = {
   threads: ReviewThread[];
   threadable: boolean;
   currentPath: string;
+  composerOpen: boolean;
+  composerId: string;
+  onCancelComposer: () => void;
 };
 
 
@@ -573,43 +902,31 @@ function ThreadColumn({
   threads,
   threadable,
   currentPath,
+  composerOpen,
+  composerId,
+  onCancelComposer,
 }: ThreadColumnProps) {
+  const showThreadingNote = !threadable && threads.length === 0;
+  if (!composerOpen && threads.length === 0 && !showThreadingNote) return null;
+
   return (
     <div className="thread-column">
-      <div className="thread-column-head">
-        <h5>Inline threads</h5>
-        <p className="muted-copy">
-          Keep discussion attached to this diff block across snapshot history.
-        </p>
-      </div>
+      {threadable && composerOpen ? (
+        <InlineThreadComposer
+          anchor={anchor}
+          composerId={composerId}
+          currentPath={currentPath}
+          onCancel={onCancelComposer}
+          reviewId={reviewId}
+          snapshotId={snapshotId}
+        />
+      ) : null}
 
-      {threadable ? (
-        <details className="thread-composer">
-          <summary>Start a thread</summary>
-          <form action={createThreadAction} className="thread-form">
-            <input name="returnTo" type="hidden" value={currentPath} />
-            <input name="reviewId" type="hidden" value={reviewId} />
-            <input name="snapshotId" type="hidden" value={snapshotId} />
-            <input name="anchorJson" type="hidden" value={JSON.stringify(anchor)} />
-            <label>
-              Message
-              <textarea
-                name="bodyMarkdown"
-                placeholder="Explain the regression, ask for notebook updates, or capture follow-up context."
-                required
-                rows={4}
-              />
-            </label>
-            <button className="primary-button" type="submit">
-              Create thread
-            </button>
-          </form>
-        </details>
-      ) : (
+      {showThreadingNote ? (
         <p className="muted-copy">
-          New threads can only be created on changed blocks in the latest ready snapshot.
+          New threads can only start on changed areas in the latest ready push.
         </p>
-      )}
+      ) : null}
 
       {threads.length ? (
         <div className="thread-stack">
@@ -617,57 +934,210 @@ function ThreadColumn({
             <ThreadCard currentPath={currentPath} key={thread.id} thread={thread} />
           ))}
         </div>
-      ) : (
-        <p className="muted-copy">No threads are attached to this block yet.</p>
-      )}
+      ) : null}
     </div>
   );
 }
 
 
+function InlineThreadComposer({
+  reviewId,
+  snapshotId,
+  anchor,
+  currentPath,
+  composerId,
+  onCancel,
+}: {
+  reviewId: string;
+  snapshotId: string;
+  anchor: ThreadAnchor;
+  currentPath: string;
+  composerId: string;
+  onCancel: () => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const drafts = useContext(CommentDrafts);
+  const draftKey = `${snapshotId}:${buildAnchorKey(anchor)}`;
+
+  useEffect(() => {
+    const focusHandle = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(focusHandle);
+    };
+  }, []);
+
+  return (
+    <ThreadMutationForm
+      action={buildWorkspaceActionPath("create-thread")}
+      className="thread-form thread-form-inline"
+      id={composerId}
+      method="post"
+      onSuccess={() => drafts?.delete(draftKey)}
+    >
+      <input name="returnTo" type="hidden" value={currentPath} />
+      <input name="reviewId" type="hidden" value={reviewId} />
+      <input name="snapshotId" type="hidden" value={snapshotId} />
+      <input name="anchorJson" type="hidden" value={JSON.stringify(anchor)} />
+      <div className="thread-form-inline-head">
+        <strong>Start a thread</strong>
+        <span className="muted-copy">Keep it attached to this block.</span>
+      </div>
+      <textarea
+        autoFocus
+        aria-label="New discussion comment"
+        name="bodyMarkdown"
+        defaultValue={drafts?.get(draftKey) ?? ""}
+        onChange={(event) => drafts?.set(draftKey, event.target.value)}
+        placeholder="Ask for context, call out a regression, or note the follow-up you want here."
+        ref={textareaRef}
+        required
+        rows={3}
+      />
+      <div className="thread-form-actions">
+        <span className="muted-copy">Posts to this review block.</span>
+        <button className="ghost-button thread-inline-button" onClick={() => { drafts?.delete(draftKey); onCancel(); }} type="button">
+          Cancel
+        </button>
+        <button className="primary-button thread-inline-button" type="submit">
+          Comment
+        </button>
+      </div>
+    </ThreadMutationForm>
+  );
+}
+
+
+function OriginalDiscussionLink({ thread, review }: {
+  thread: ReviewThread;
+  review: WorkspacePayload["review"];
+}) {
+  const origin = review.snapshot_history.find((entry) => entry.id === thread.origin_snapshot_id);
+  return (
+    <p className="muted-copy">
+      This discussion’s original context is not displayed in Changes on this push.
+      {origin && origin.snapshot_index !== review.selected_snapshot_index ? (
+        <> <Link
+          className="text-link"
+          href={buildSnapshotRoute(review.owner, review.repo, review.pull_number, origin.snapshot_index) as Route}
+        >
+          Open original push {origin.snapshot_index}
+        </Link></>
+      ) : null}
+    </p>
+  );
+}
+
+function DiscussionPreview({ thread, notebooks }: {
+  thread: ReviewThread;
+  notebooks: SnapshotNotebook[];
+}) {
+  if (thread.anchor_drifted || thread.anchor.block_kind === "metadata") return null;
+  const row = notebooks
+    .find((notebook) => notebook.path === thread.anchor.notebook_path)
+    ?.render_rows.find((candidate) =>
+      buildAnchorKey(candidate.thread_anchors[thread.anchor.block_kind]) === buildAnchorKey(thread.anchor),
+    );
+  if (!row) return null;
+
+  const source = row.source.head ?? row.source.base;
+  const outputSummary = thread.anchor.block_kind === "outputs"
+    ? getMeaningfulOutputItems(row)
+        .slice(0, 3)
+        .map((item) => "text" in item ? item.text : "summary" in item ? item.summary : "Saved image")
+        .join(" · ")
+        .slice(0, 400)
+    : null;
+  if (!source && !outputSummary) return null;
+
+  return (
+    <div>
+      {source ? (
+        <pre
+          className="discussion-source-preview"
+          aria-label={row.source.head === null
+            ? "Previous source context (first four lines)"
+            : "Current source context (first four lines)"}
+        >
+          <code>{source.split("\n").slice(0, 4).join("\n").slice(0, 600)}</code>
+        </pre>
+      ) : null}
+      {outputSummary ? (
+        <p className="muted-copy discussion-output-preview">Saved output excerpt: {outputSummary}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ThreadCard({
   thread,
   currentPath,
+  surface = "changes",
 }: {
   thread: ReviewThread;
   currentPath: string;
+  surface?: "changes" | "index";
 }) {
   const mirrorStatus = summarizeGitHubMirrorStatus(thread);
+  const authorLabel = thread.messages.at(-1)?.author_login ?? "NotebookLens reviewer";
+  const previewText = summarizeThreadPreview(thread);
+  const messageCount = thread.messages.length;
+  const sectionId = `${surface === "index" ? "index-" : ""}${buildThreadSectionId(thread.id)}`;
 
   return (
-    <article className="thread-card">
-      <div className="thread-head">
-        <StatusPill label={thread.status} tone={threadTone(thread.status)} />
-        {thread.carried_forward ? <StatusPill label="carried forward" tone="accent" /> : null}
-      </div>
-
-      <section className="mirror-card">
-        <div className="mirror-head">
-          <div>
-            <p className="eyebrow">GitHub Mirror</p>
-            <h6>{mirrorStatus.label}</h6>
+    <details
+      className="thread-card thread-card-flat thread-details"
+      id={sectionId}
+      open={thread.status !== "resolved"}
+    >
+      <summary className="thread-summary">
+        <div className="thread-summary-main">
+          <div className="thread-heading-copy">
+            <strong>{authorLabel}</strong>
+            <p className="thread-preview">{previewText}</p>
           </div>
-          <StatusPill label={mirrorStatus.label} tone={mirrorStatus.tone} />
+          <div className="thread-head-pills">
+            <StatusPill label={thread.status === "resolved" ? "Resolved in NotebookLens" : thread.status} tone={threadTone(thread.status)} />
+            {thread.carried_forward ? <StatusPill label="continued here" tone="accent" /> : null}
+          </div>
         </div>
-        <p className="muted-copy">{mirrorStatus.description}</p>
-        <div className="mirror-links">
-          {thread.github_root_comment_url && mirrorStatus.linkLabel ? (
-            <a
-              className="text-link"
-              href={thread.github_root_comment_url}
-              rel="noreferrer"
-              target="_blank"
-            >
-              {mirrorStatus.linkLabel}
-            </a>
-          ) : null}
-          {thread.github_last_mirrored_at ? (
-            <span className="muted-copy">
-              Last update {formatTimestamp(thread.github_last_mirrored_at)}
-            </span>
-          ) : null}
+        <div className="thread-secondary-row">
+          <span className="muted-copy">
+            Latest reply {formatTimestamp(thread.messages.at(-1)?.created_at ?? thread.created_at)} · {messageCount} message{messageCount === 1 ? "" : "s"}
+          </span>
+          <span className="muted-copy thread-mirror-note" title={mirrorStatus.description}>
+            GitHub: {mirrorStatus.label}
+          </span>
         </div>
-      </section>
+        <span className="thread-expand-label">Expand or collapse discussion</span>
+      </summary>
+
+      {(thread.github_root_comment_url || thread.github_last_mirrored_at) ? (
+        <div className="thread-secondary-row thread-secondary-row-expanded">
+          <span className="muted-copy thread-mirror-note" title={mirrorStatus.description}>
+            {mirrorStatus.description}
+          </span>
+          <div className="thread-secondary-links">
+            {thread.github_root_comment_url && mirrorStatus.linkLabel ? (
+              <a
+                className="text-link"
+                href={thread.github_root_comment_url}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {mirrorStatus.linkLabel}
+              </a>
+            ) : null}
+            {thread.github_last_mirrored_at ? (
+              <span className="muted-copy">
+                Last update {formatTimestamp(thread.github_last_mirrored_at)}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="message-stack">
         {thread.messages.map((message) => (
@@ -688,7 +1158,9 @@ function ThreadCard({
                 ) : null}
               </div>
             </div>
-            <p className="message-body">{message.body_markdown}</p>
+            <div className="message-body markdown-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.body_markdown}</ReactMarkdown>
+            </div>
           </div>
         ))}
       </div>
@@ -696,39 +1168,130 @@ function ThreadCard({
       <div className="thread-actions">
         <details className="reply-details">
           <summary>Reply</summary>
-          <form action={replyToThreadAction} className="thread-form">
-            <input name="returnTo" type="hidden" value={currentPath} />
+          <ThreadMutationForm
+            action={buildWorkspaceActionPath("reply-thread")}
+            className="thread-form thread-form-reply"
+            method="post"
+          >
+            <input name="returnTo" type="hidden" value={`${currentPath.split("#")[0]}#${sectionId}`} />
             <input name="threadId" type="hidden" value={thread.id} />
-            <label>
-              Message
-              <textarea name="bodyMarkdown" required rows={3} />
-            </label>
-            <button className="primary-button" type="submit">
-              Add reply
-            </button>
-          </form>
+            <textarea
+              aria-label={`Reply to ${authorLabel}`}
+              name="bodyMarkdown"
+              placeholder="Add context or answer the open question."
+              required
+              rows={3}
+            />
+            <div className="thread-form-actions">
+              <span className="muted-copy">Reply in place.</span>
+              <button className="primary-button" type="submit">
+                Add reply
+              </button>
+            </div>
+          </ThreadMutationForm>
         </details>
 
         {thread.status === "resolved" ? (
-          <form action={reopenThreadAction}>
-            <input name="returnTo" type="hidden" value={currentPath} />
+          <ThreadMutationForm action={buildWorkspaceActionPath("reopen-thread")} pendingLabel="Reopening…">
+            <input name="returnTo" type="hidden" value={`${currentPath.split("#")[0]}#${sectionId}`} />
             <input name="threadId" type="hidden" value={thread.id} />
             <button className="secondary-button" type="submit">
               Reopen
             </button>
-          </form>
+          </ThreadMutationForm>
         ) : (
-          <form action={resolveThreadAction}>
-            <input name="returnTo" type="hidden" value={currentPath} />
+          <ThreadMutationForm action={buildWorkspaceActionPath("resolve-thread")} pendingLabel="Resolving…">
+            <input name="returnTo" type="hidden" value={`${currentPath.split("#")[0]}#${sectionId}`} />
             <input name="threadId" type="hidden" value={thread.id} />
             <button className="secondary-button" type="submit">
               Resolve
             </button>
-          </form>
+          </ThreadMutationForm>
         )}
       </div>
-    </article>
+    </details>
   );
+}
+
+
+function SnapshotHistoryRailCard({
+  review,
+}: {
+  review: WorkspacePayload["review"];
+}) {
+  return (
+    <WorkspaceMenu label="Switch push" id={SNAPSHOT_HISTORY_ID} align="end">
+      <h2>Saved pushes ({review.snapshot_history.length})</h2>
+      <nav className="history-list" aria-label="Push history">
+        {review.snapshot_history.length === 0 ? <p>No saved pushes yet.</p> : null}
+        {review.snapshot_history
+          .slice()
+          .reverse()
+          .map((entry) => {
+            const href = entry.is_latest
+              ? buildSnapshotRoute(
+                  review.owner,
+                  review.repo,
+                  review.pull_number,
+                  null,
+                )
+              : buildSnapshotRoute(
+                  review.owner,
+                  review.repo,
+                  review.pull_number,
+                  entry.snapshot_index,
+                );
+
+            return (
+              <Link
+                className={`history-link ${
+                  review.selected_snapshot_index === entry.snapshot_index
+                    ? "history-link-active"
+                    : ""
+                }`}
+                href={href as Route}
+                aria-current={review.selected_snapshot_index === entry.snapshot_index ? "page" : undefined}
+                key={entry.id}
+              >
+                <span className="history-entry-copy">
+                  <strong>{entry.head_commit_subject || "Commit subject unavailable"}</strong>
+                  <span className="history-caption history-entry-meta">
+                    Push {entry.snapshot_index} · {entry.head_sha.slice(0, 8)} · Saved{" "}
+                    <time dateTime={entry.created_at} title={formatTimestamp(entry.created_at)}>
+                      {formatHistoryTimestamp(entry.created_at)}
+                    </time>
+                    {entry.is_latest ? " · Latest" : ""}
+                    {review.selected_snapshot_index === entry.snapshot_index ? " · Current" : ""}
+                  </span>
+                </span>
+              </Link>
+            );
+          })}
+      </nav>
+    </WorkspaceMenu>
+  );
+}
+
+
+function formatHistoryTimestamp(value: string): string {
+  return new Intl.DateTimeFormat("en", {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(value));
+}
+
+
+function summarizeThreadPreview(thread: ReviewThread): string {
+  const body = thread.messages.at(-1)?.body_markdown?.replace(/\s+/g, " ").trim();
+
+  if (!body) {
+    return "Open the thread for the full discussion.";
+  }
+
+  if (body.length <= 110) {
+    return body;
+  }
+
+  return `${body.slice(0, 107).trimEnd()}...`;
 }
 
 
@@ -751,7 +1314,8 @@ function EmptyState({
   description: string;
 }) {
   return (
-    <section className="summary-card">
+    <section className="summary-card empty-state-card">
+      <p className="eyebrow">Review status</p>
       <h2>{title}</h2>
       <p className="muted-copy">{description}</p>
     </section>
@@ -761,12 +1325,12 @@ function EmptyState({
 
 function blockTitle(blockKind: SnapshotBlockKind): string {
   if (blockKind === "source") {
-    return "Source diff";
+    return "Code";
   }
   if (blockKind === "outputs") {
-    return "Output summary diff";
+    return "Outputs";
   }
-  return "Metadata diff";
+  return "Metadata";
 }
 
 
@@ -790,13 +1354,263 @@ function threadTone(status: ReviewThread["status"]): "accent" | "success" | "war
 
 
 function outputChangeTone(
-  changeType: "added" | "removed" | "modified",
-): "accent" | "warning" | "default" {
+  changeType: string,
+): "success" | "danger" | "default" {
   if (changeType === "added") {
-    return "accent";
+    return "success";
   }
-  if (changeType === "removed") {
-    return "warning";
+  if (changeType === "removed" || changeType === "deleted") {
+    return "danger";
   }
   return "default";
+}
+
+
+function formatReviewStatusLabel(status: WorkspacePayload["review"]["status"]): string {
+  if (status === "ready") {
+    return "Review ready";
+  }
+  if (status === "pending") {
+    return "Preparing review";
+  }
+  if (status === "failed") {
+    return "Needs attention";
+  }
+  return "Review closed";
+}
+
+
+function formatSnapshotStatusLabel(status: ReviewSnapshotRecord["status"]): string {
+  if (status === "ready") {
+    return "Ready to review";
+  }
+  if (status === "pending") {
+    return "Preparing";
+  }
+  return "Needs attention";
+}
+
+
+function formatChangeTypeLabel(changeType: SnapshotNotebook["change_type"]): string {
+  if (changeType === "modified") {
+    return "updated";
+  }
+  if (changeType === "added") {
+    return "new";
+  }
+  if (changeType === "deleted" || changeType === "removed") {
+    return "removed";
+  }
+  return changeType;
+}
+
+
+function formatCellTypeLabel(cellType: RenderRow["cell_type"]): string {
+  if (cellType === "code") {
+    return "Code cell";
+  }
+  if (cellType === "markdown") {
+    return "Markdown cell";
+  }
+  return "Raw cell";
+}
+
+
+function formatRowChangeLabel(changeType: RenderRow["change_type"]): string {
+  if (changeType === "modified") {
+    return "updated";
+  }
+  if (changeType === "added") {
+    return "added";
+  }
+  if (changeType === "deleted" || changeType === "removed") {
+    return "removed";
+  }
+  if (changeType === "output_changed") {
+    return "outputs changed";
+  }
+  return "moved";
+}
+
+
+function splitNotebookPath(path: string): [string, string] {
+  const parts = path.split("/");
+  const fileLabel = parts.pop() ?? path;
+  const directoryLabel = parts.length ? parts.join(" / ") : "Repository root";
+  return [directoryLabel, fileLabel];
+}
+
+
+function getThreadsForNotebook(
+  notebook: SnapshotNotebook,
+  threadsByAnchor: Map<string, ReviewThread[]>,
+): ReviewThread[] {
+  const seen = new Set<string>();
+  const notebookThreads: ReviewThread[] = [];
+
+  for (const row of notebook.render_rows) {
+    for (const anchor of Object.values(row.thread_anchors)) {
+      const threads = threadsByAnchor.get(buildAnchorKey(anchor)) ?? [];
+      for (const thread of threads) {
+        if (!seen.has(thread.id)) {
+          seen.add(thread.id);
+          notebookThreads.push(thread);
+        }
+      }
+    }
+  }
+
+  return notebookThreads;
+}
+
+function hasVisibleReviewBlocks(row: RenderRow, threads: Map<string, ReviewThread[]>): boolean {
+  return getReviewBlockKinds(row, threads).length > 0;
+}
+
+function getReviewBlockKinds(row: RenderRow, threads: Map<string, ReviewThread[]>): ("source" | "outputs")[] {
+  const blocks = getVisibleBlockKinds(row, threads).filter((kind) => kind !== "metadata");
+  if (row.change_type === "moved" && !blocks.includes("source")) blocks.unshift("source");
+  return blocks;
+}
+
+
+function buildNotebookSectionId(path: string): string {
+  return `notebook-${toFragmentId(path)}`;
+}
+
+
+function buildThreadComposerId(anchor: ThreadAnchor): string {
+  return `thread-composer-${toFragmentId(buildAnchorFragment(anchor))}`;
+}
+
+
+function buildBlockSectionId(anchor: ThreadAnchor): string {
+  return `block-${toFragmentId(buildAnchorFragment(anchor))}`;
+}
+
+
+function buildThreadSectionId(threadId: string): string {
+  return `thread-${toFragmentId(threadId)}`;
+}
+
+
+function buildNotebookReviewSummary({
+  firstVisibleRow,
+  reviewItemCount,
+  noticeCount,
+  openThreadCount,
+}: {
+  firstVisibleRow: RenderRow | null;
+  reviewItemCount: number;
+  noticeCount: number;
+  openThreadCount: number;
+}): string | null {
+  const sentences: string[] = [];
+
+  if (firstVisibleRow) {
+    const firstRowSummary = firstVisibleRow.summary.trim();
+    const firstRowLabel = formatCellLabel(firstVisibleRow);
+    sentences.push(
+      firstRowSummary
+        ? `First changed row: ${firstRowLabel}. ${firstRowSummary}`
+        : `First changed row: ${firstRowLabel}.`,
+    );
+    if (reviewItemCount > 1) {
+      const remainingCount = reviewItemCount - 1;
+      sentences.push(`${remainingCount} more ${pluralize(remainingCount, "changed row")}.`);
+    }
+  } else if (noticeCount > 0) {
+    sentences.push(`Notebook notes only. ${noticeCount} ${pluralize(noticeCount, "note")}.`);
+  }
+
+  if (openThreadCount > 0) {
+    sentences.push(`${openThreadCount} open ${pluralize(openThreadCount, "thread")}.`);
+  }
+
+  if (noticeCount > 0 && firstVisibleRow) {
+    sentences.push(`${noticeCount} notebook ${pluralize(noticeCount, "note")}.`);
+  }
+
+  if (sentences.length === 0) {
+    return "Notebook change ready for review.";
+  }
+
+  return sentences.join(" ");
+}
+
+
+function formatThreadAnchorSummary(anchor: ThreadAnchor): string {
+  const displayIndex = anchor.cell_locator.display_index;
+  const cellLabel = displayIndex === null ? "Notebook-level" : formatCellLabel({ locator: anchor.cell_locator });
+
+  return `${cellLabel} · ${blockTitle(anchor.block_kind)}`;
+}
+
+
+function pluralize(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
+}
+
+
+function jumpToFragment(fragmentId: string, onNavigate: (hash: string) => void): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextHash = `#${fragmentId}`;
+  revealFragment(fragmentId);
+  focusFragment(fragmentId);
+  if (window.location.hash === nextHash) {
+    document.getElementById(fragmentId)?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      block: "start",
+    });
+    onNavigate(nextHash);
+    return;
+  }
+
+  window.location.hash = fragmentId;
+  onNavigate(nextHash);
+}
+
+
+function buildAnchorFragment(anchor: ThreadAnchor): string {
+  const locator =
+    anchor.cell_locator.display_index ??
+    anchor.cell_locator.head_index ??
+    anchor.cell_locator.base_index ??
+    "notebook";
+
+  return JSON.stringify([
+    anchor.notebook_path,
+    anchor.block_kind,
+    locator,
+    anchor.source_fingerprint,
+  ]);
+}
+
+
+function toFragmentId(value: string): string {
+  return Array.from(value).map((character) => /^[a-zA-Z0-9-]$/.test(character) ? character : `~${character.codePointAt(0)!.toString(16)}~`).join("");
+}
+
+function revealFragment(fragmentId: string): void {
+  const target = document.getElementById(fragmentId);
+  const topbar = target?.closest(".workspace-shell")?.querySelector(".workspace-topbar");
+  if (target && topbar) target.style.scrollMarginTop = `${topbar.getBoundingClientRect().height + 16}px`;
+  for (let ancestor: HTMLElement | null = target; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+  }
+  target?.scrollIntoView?.({ block: "start" });
+}
+
+function focusFragment(fragmentId: string): void {
+  window.requestAnimationFrame(() => {
+    revealFragment(fragmentId);
+    const target = document.getElementById(fragmentId);
+    if (target) {
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  });
 }

@@ -1,0 +1,14 @@
+.git
+.serena
+.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+**/test-results
+**/playwright-report
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key

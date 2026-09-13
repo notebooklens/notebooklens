@@ -91,7 +91,7 @@ services:
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     environment:
       APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}

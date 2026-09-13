@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability reporting
-    url: https://github.com/Gsbreddy/notebooklens/security/advisories
+    url: https://github.com/notebooklens/notebooklens/security/advisories
     about: Use GitHub private vulnerability reporting for sensitive security issues.
   - name: Setup and usage guide
-    url: https://github.com/Gsbreddy/notebooklens#readme
+    url: https://github.com/notebooklens/notebooklens#readme
     about: Check the README and example workflow before opening a new issue.

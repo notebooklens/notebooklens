@@ -37,6 +37,18 @@ MAX_OUTPUT_TEXT_FOR_AI_CHARS = 2_000
 
 VALID_CELL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+# Widget-state-aware output comparison. ipywidgets persists interactive
+# widget *state* (e.g. a slider's current value) in notebook-level metadata
+# (`metadata.widgets["application/vnd.jupyter.widget-state+json"]`), separate
+# from the per-cell `application/vnd.jupyter.widget-view+json` output, which
+# only references a `model_id`. A pure state edit therefore leaves every
+# cell's raw source/outputs byte-for-byte identical while still being a real,
+# reviewable content change -- so it must be detected here, not just at
+# render time.
+_WIDGET_STATE_MIME_TYPE = "application/vnd.jupyter.widget-state+json"
+_WIDGET_VIEW_MIME_TYPE = "application/vnd.jupyter.widget-view+json"
+_WIDGET_MODEL_REF_PREFIX = "IPY_MODEL_"
+
 
 @dataclass(frozen=True)
 class CellLocator:
@@ -141,9 +153,20 @@ class DiffLimits:
 
 
 @dataclass(frozen=True)
+class _WidgetManagerState:
+    """Parsed `application/vnd.jupyter.widget-state+json` notebook metadata."""
+
+    models: Dict[str, Dict[str, Any]]
+
+
+_EMPTY_WIDGET_MANAGER_STATE = _WidgetManagerState(models={})
+
+
+@dataclass(frozen=True)
 class _ParsedNotebook:
     cells: List["_Cell"]
     material_metadata: Dict[str, Any]
+    widget_state: _WidgetManagerState = _EMPTY_WIDGET_MANAGER_STATE
 
 
 @dataclass(frozen=True)
@@ -295,7 +318,14 @@ def _diff_single_notebook(
         )
         alignment_rows = alignment_rows[: limits.max_cells_per_notebook]
 
-    pair_diffs = _build_pair_diffs(base_nb.cells, head_nb.cells, alignment_rows, limits=limits)
+    pair_diffs = _build_pair_diffs(
+        base_nb.cells,
+        head_nb.cells,
+        alignment_rows,
+        limits=limits,
+        base_widget_state=base_nb.widget_state,
+        head_widget_state=head_nb.widget_state,
+    )
     moved_pairs = _detect_moved_pairs(pair_diffs)
 
     cell_changes: List[CellChange] = []
@@ -391,6 +421,7 @@ def _parse_notebook(content: Optional[str]) -> Tuple[Optional[_ParsedNotebook], 
         _ParsedNotebook(
             cells=cells,
             material_metadata=_material_notebook_metadata(payload.get("metadata")),
+            widget_state=_parse_widget_manager_state(payload.get("metadata")),
         ),
         None,
     )
@@ -478,6 +509,105 @@ def _stable_jsonable(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _parse_widget_manager_state(notebook_metadata: Any) -> _WidgetManagerState:
+    if not isinstance(notebook_metadata, dict):
+        return _EMPTY_WIDGET_MANAGER_STATE
+    widgets_metadata = notebook_metadata.get("widgets")
+    if not isinstance(widgets_metadata, dict):
+        return _EMPTY_WIDGET_MANAGER_STATE
+    manager_state = widgets_metadata.get(_WIDGET_STATE_MIME_TYPE)
+    if not isinstance(manager_state, dict):
+        return _EMPTY_WIDGET_MANAGER_STATE
+    raw_models = manager_state.get("state")
+    if not isinstance(raw_models, dict):
+        return _EMPTY_WIDGET_MANAGER_STATE
+    models = {
+        str(model_id): model_entry
+        for model_id, model_entry in raw_models.items()
+        if isinstance(model_id, str) and isinstance(model_entry, dict)
+    }
+    return _WidgetManagerState(models=models)
+
+
+def _referenced_widget_model_ids(value: Any) -> List[str]:
+    ids: List[str] = []
+    if isinstance(value, str):
+        if value.startswith(_WIDGET_MODEL_REF_PREFIX):
+            ids.append(value[len(_WIDGET_MODEL_REF_PREFIX) :])
+    elif isinstance(value, dict):
+        for nested in value.values():
+            ids.extend(_referenced_widget_model_ids(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            ids.extend(_referenced_widget_model_ids(nested))
+    return ids
+
+
+def _resolve_widget_state_closure(
+    root_model_id: str,
+    widget_state: _WidgetManagerState,
+) -> Dict[str, Any]:
+    """Resolve widget model state transitively reachable from `root_model_id`.
+
+    This is a permissive, comparison-only resolution (unlike the strict
+    render-time resolution in `review_core`): a missing model id is recorded
+    as `None` rather than aborting, so a transition between "state present"
+    and "state missing" is itself detected as a change. Cycles are guarded
+    via `seen`.
+    """
+    resolved: Dict[str, Any] = {}
+    pending = [root_model_id]
+    seen: set[str] = set()
+    while pending:
+        current_id = pending.pop()
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        entry = widget_state.models.get(current_id)
+        resolved[current_id] = entry
+        if entry is not None:
+            pending.extend(_referenced_widget_model_ids(entry.get("state")))
+    return resolved
+
+
+def _widget_view_model_ids(outputs: Sequence[Dict[str, Any]]) -> List[str]:
+    model_ids: List[str] = []
+    for output in outputs:
+        data = output.get("data")
+        if not isinstance(data, dict):
+            continue
+        raw_view = data.get(_WIDGET_VIEW_MIME_TYPE)
+        model_id = raw_view.get("model_id") if isinstance(raw_view, dict) else None
+        if isinstance(model_id, str) and model_id:
+            model_ids.append(model_id)
+    return model_ids
+
+
+def _widget_referenced_state_changed(
+    base_outputs: Sequence[Dict[str, Any]],
+    head_outputs: Sequence[Dict[str, Any]],
+    *,
+    base_widget_state: _WidgetManagerState,
+    head_widget_state: _WidgetManagerState,
+) -> bool:
+    """Detect a saved-widget-state-only change for a matched cell pair.
+
+    Only model ids actually referenced (directly or transitively) by this
+    cell's own widget-view outputs are resolved, so an edit to an unrelated
+    widget model elsewhere in the notebook never marks this cell dirty.
+    """
+    if not base_widget_state.models and not head_widget_state.models:
+        return False
+    model_ids = set(_widget_view_model_ids(head_outputs))
+    model_ids.update(_widget_view_model_ids(base_outputs))
+    for model_id in model_ids:
+        base_closure = _resolve_widget_state_closure(model_id, base_widget_state)
+        head_closure = _resolve_widget_state_closure(model_id, head_widget_state)
+        if base_closure != head_closure:
+            return True
+    return False
 
 
 def _align_cells(base_cells: Sequence[_Cell], head_cells: Sequence[_Cell]) -> List[_AlignmentRow]:
@@ -626,6 +756,8 @@ def _build_pair_diffs(
     rows: Sequence[_AlignmentRow],
     *,
     limits: DiffLimits,
+    base_widget_state: _WidgetManagerState = _EMPTY_WIDGET_MANAGER_STATE,
+    head_widget_state: _WidgetManagerState = _EMPTY_WIDGET_MANAGER_STATE,
 ) -> List[_PairDiff]:
     pair_diffs: List[_PairDiff] = []
     for row in rows:
@@ -642,6 +774,20 @@ def _build_pair_diffs(
         source_changed = _source_for_compare(base_cell) != _source_for_compare(head_cell)
         outputs_changed = _outputs_for_compare(base_cell) != _outputs_for_compare(head_cell)
         material_metadata_changed = _metadata_for_compare(base_cell) != _metadata_for_compare(head_cell)
+
+        if (
+            not outputs_changed
+            and base_cell is not None
+            and head_cell is not None
+            and _widget_referenced_state_changed(
+                base_cell.outputs,
+                head_cell.outputs,
+                base_widget_state=base_widget_state,
+                head_widget_state=head_widget_state,
+            )
+        ):
+            outputs_changed = True
+
         output_changes: List[OutputChange] = []
 
         if outputs_changed or base_cell is None or head_cell is None:

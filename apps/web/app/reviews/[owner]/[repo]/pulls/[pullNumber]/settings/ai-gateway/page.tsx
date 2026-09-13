@@ -1,8 +1,7 @@
-import { notFound } from "next/navigation";
-
 import { AiGatewaySettings } from "@/components/ai-gateway-settings";
+import { AiSettingsRecovery, type AiSettingsRecoveryKind } from "@/components/ai-settings-shell";
 import { ApiRequestError, buildLoginHref, getAiGatewaySettings, getReviewWorkspace } from "@/lib/api";
-import { buildAiGatewayRoute } from "@/lib/review-workspace";
+import { buildAiGatewayRoute, buildSnapshotRoute } from "@/lib/review-workspace";
 
 
 type PageProps = {
@@ -22,6 +21,27 @@ export default async function AiGatewaySettingsPage({ params }: PageProps) {
     routeParams.repo,
     pullNumber,
   );
+  const recovery = (kind: AiSettingsRecoveryKind) => {
+    let loginHref = "";
+    if (kind === "unauthenticated" || kind === "forbidden") {
+      try {
+        loginHref = buildLoginHref(currentPath);
+      } catch {
+        // A broken API origin must not break the error page too. Local Home,
+        // Back and retry remain usable; never invent an OAuth endpoint.
+        kind = "unavailable";
+      }
+    }
+    return (
+      <AiSettingsRecovery
+        kind={kind}
+        context={`${routeParams.owner}/${routeParams.repo}`}
+        reviewHref={buildSnapshotRoute(routeParams.owner, routeParams.repo, pullNumber, null)}
+        currentPath={currentPath}
+        loginHref={loginHref}
+      />
+    );
+  };
 
   try {
     const workspace = await getReviewWorkspace(
@@ -41,48 +61,11 @@ export default async function AiGatewaySettingsPage({ params }: PageProps) {
   } catch (error) {
     if (error instanceof ApiRequestError) {
       if (error.status === 401) {
-        return <AuthWall currentPath={currentPath} />;
+        return recovery("unauthenticated");
       }
-
-      if (error.status === 404) {
-        notFound();
-      }
-
-      return <ErrorWall detail={error.detail} />;
+      if (error.status === 403) return recovery("forbidden");
+      if (error.status === 404) return recovery("not-found");
     }
-
-    throw error;
+    return recovery("unavailable");
   }
-}
-
-
-function AuthWall({ currentPath }: { currentPath: string }) {
-  return (
-    <main className="center-stage">
-      <section className="hero-card compact-card">
-        <p className="eyebrow">Managed AI Settings</p>
-        <h1>Sign in with GitHub to manage installation settings</h1>
-        <p className="hero-summary">
-          NotebookLens requires an authenticated GitHub session before it can
-          verify installation-admin access for LiteLLM settings.
-        </p>
-        <a className="primary-button" href={buildLoginHref(currentPath)}>
-          Continue with GitHub
-        </a>
-      </section>
-    </main>
-  );
-}
-
-
-function ErrorWall({ detail }: { detail: string }) {
-  return (
-    <main className="center-stage">
-      <section className="hero-card compact-card">
-        <p className="eyebrow">Settings Error</p>
-        <h1>NotebookLens could not load this installation configuration</h1>
-        <p className="hero-summary">{detail}</p>
-      </section>
-    </main>
-  );
 }

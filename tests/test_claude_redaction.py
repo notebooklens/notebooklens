@@ -24,7 +24,7 @@ def test_secret_and_email_redaction_masks_sensitive_patterns() -> None:
     assert "analyst@example.com" not in redacted
     assert "<REDACTED_SECRET>" in redacted
     assert "<REDACTED_EMAIL>" in redacted
-    assert "postgresql://alice:pw123@db.internal:5432/app" not in redacted
+    assert "postgresql://alice:pw123@example.com:5432/app" not in redacted
     assert "<REDACTED_BASE64_BLOB>" in redacted
 
 

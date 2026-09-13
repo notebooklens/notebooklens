@@ -9,11 +9,13 @@ from src import __display_version__
 
 from .config import ApiConfigurationError
 from .managed_github import ManagedGitHubClientError
+from .oauth import OAuthStateError
 from .orchestration import ManagedWebhookPayloadError
 from .routes.assets import router as assets_router
 from .routes.auth import router as auth_router
 from .routes.github import router as github_router
 from .routes.health import router as health_router
+from .routes.home import router as home_router
 from .routes.reviews import router as reviews_router
 from .routes.settings import router as settings_router
 from .webhooks import GitHubWebhookVerificationError
@@ -23,6 +25,7 @@ def create_app() -> FastAPI:
     """Create the managed NotebookLens FastAPI application."""
     app = FastAPI(title="NotebookLens Managed API", version=__display_version__)
     app.include_router(health_router)
+    app.include_router(home_router)
     app.include_router(github_router)
     app.include_router(auth_router)
     app.include_router(reviews_router)
@@ -43,7 +46,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ManagedGitHubClientError)
     async def handle_managed_github_error(_: Request, exc: ManagedGitHubClientError) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
+        # Upstream response bodies may contain private repository or user data.
+        return JSONResponse(status_code=502, content={"detail": "GitHub request failed. Please try again."})
+
+    @app.exception_handler(OAuthStateError)
+    async def handle_oauth_state_error(_: Request, exc: OAuthStateError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     return app
 

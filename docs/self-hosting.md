@@ -1,5 +1,7 @@
 # Self-Hosting the Managed Workspace
 
+For a loopback-only test-organization pilot, use [local acceptance](local-acceptance.md).
+
 NotebookLens `v0.4.0-beta` supports one operator path for internal pilots: Docker Compose on a single host.
 
 This runbook covers the managed PR review workspace only. The OSS GitHub Action remains unchanged and can run with or without the managed stack.
