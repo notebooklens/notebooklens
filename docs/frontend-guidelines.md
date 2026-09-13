@@ -11,17 +11,25 @@ change description; do not silently introduce a competing design system.
 The reviewer needs to find a notebook, understand code and result changes, ask a
 contextual question, follow its discussion, and return without losing work.
 
+- The notebook is the review surface: present a continuous document with outputs
+  directly beneath their cells, left-gutter comment controls, and editors below
+  the relevant anchor. Avoid turning each cell into a dashboard card.
 - Keep notebook navigation and the current notebook/cell context discoverable
   while reading. Do not put the only navigation inside several disclosures or
   behind the entire notebook document.
 - Prioritize code and outputs over installation details, AI settings, timestamps,
   duplicate status badges, and administrative explanations.
+- Do not add a "What needs attention" summary/disclosure or generic reviewer
+  guidance panel. Show necessary rendering/coverage warnings briefly in context;
+  do not require expanding a dashboard summary to read the notebook.
 - Do not expose notebook metadata panels or metadata-only change counters in
   the review UI. Preserve existing metadata-anchored conversations in Discussions
   with truthful context; removing metadata chrome must not hide discussions.
 - Align corresponding before/after source rows. Use red for deletions and green
-  for additions, together with minus/plus markers and side labels. Render a
-  wholly added cell as a neutral, readable single pane, not a solid green block.
+  for additions, together with minus/plus markers and side labels. Whole added
+  or deleted cells use a single readable pane with the corresponding green/red
+  source tint and markers. Apply the same added/removed meaning to Markdown and
+  badges; keep plot/image content unaltered so its original colors remain truthful.
 - Show moves explicitly. A moved-only cell must not silently disappear because
   its source text is unchanged. Preserve access to surrounding notebook context;
   if that context is unavailable, explain the limitation instead of fabricating it.
@@ -117,7 +125,7 @@ link. Test real keyboard navigation rather than inferring it from JSX alone.
    long notebook paths/source lines. Contain necessary code/table scrolling instead
    of causing whole-page horizontal overflow.
 3. Inspect screenshots, not only assertions: source alignment, deletion/addition
-   markers, neutral added cells, readable output, navigation, cell labels, draft
+   markers, green added/red removed cells, readable output, navigation, cell labels, draft
    continuity, and discussion placement must all be clear at each viewport.
 4. Cover ready, empty, loading, error, success, historical, and disabled states.
    Disabled actions need an understandable reason. Recoverable failures must not

@@ -12,6 +12,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 import jwt
+import pytest
+import requests
 from sqlalchemy import select
 import yaml
 
@@ -1010,6 +1012,312 @@ def create_ready_review_fixture(
         review.latest_snapshot_id = snapshot.id
         db_session.flush()
         return str(review.id), str(installation.id)
+
+
+# Every application route requiring a session is exercised at its HTTP boundary.
+# Existing integration scenarios below cover successful authorized behavior;
+# this matrix deliberately covers missing, invalid and expired session failures.
+PROTECTED_API_ROUTES = [
+    ("GET", "/api/reviews/{owner}/{repo}/pulls/{pull_number}"),
+    ("GET", "/api/reviews/{owner}/{repo}/pulls/{pull_number}/snapshots/{snapshot_index}"),
+    ("POST", "/api/reviews/{review_id}/threads"),
+    ("POST", "/api/reviews/{review_id}/rebuild-latest"),
+    ("POST", "/api/threads/{thread_id}/messages"),
+    ("POST", "/api/threads/{thread_id}/resolve"),
+    ("POST", "/api/threads/{thread_id}/reopen"),
+    ("GET", "/api/review-assets/{asset_id}"),
+    ("GET", "/api/settings/ai-gateway"),
+    ("PUT", "/api/settings/ai-gateway"),
+    ("POST", "/api/settings/ai-gateway/test"),
+    ("GET", "/api/session"),
+    ("GET", "/api/repositories"),
+]
+
+
+def test_application_api_route_inventory_is_explicit():
+    public_routes = {
+        ("GET", "/healthz"),
+        ("GET", "/api/auth/github/login"),
+        ("GET", "/api/auth/github/callback"),
+        ("GET", "/api/auth/github/error"),
+        ("POST", "/api/auth/logout"),
+        ("GET", "/api/github/install/callback"),
+        ("POST", "/api/github/webhooks"),
+    }
+    registered = {(method.upper(), path) for path, operations in create_app().openapi()["paths"].items()
+                  for method in operations if method in {"get", "post", "put", "patch", "delete", "head", "options"}}
+    assert registered == public_routes | set(PROTECTED_API_ROUTES)
+
+
+def test_health_endpoint_reports_ready_database_and_redacts_database_failures(tmp_path: Path, monkeypatch: Any):
+    from sqlalchemy.exc import SQLAlchemyError
+    from apps.api.routes import health
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(health, "get_settings", lambda: settings)
+    client = TestClient(create_app())
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json()["checks"]["database"] == {"status": "ok"}
+
+    def unavailable_database(*args, **kwargs):
+        raise SQLAlchemyError("synthetic-private-database-detail")
+    monkeypatch.setattr(health, "get_engine", unavailable_database)
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json()["checks"]["database"] == {"status": "error", "detail": "SQLAlchemyError"}
+    assert "synthetic-private-database-detail" not in response.text
+
+
+def test_oauth_error_page_escapes_untrusted_error_copy(tmp_path: Path):
+    settings = _settings(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    response = TestClient(app).get("/api/auth/github/error", params={"message": "<script>alert(1)</script>"})
+    assert response.status_code == 400
+    assert "<script>" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+@pytest.mark.parametrize("method,path_template", PROTECTED_API_ROUTES)
+@pytest.mark.parametrize("session_kind", ["missing", "invalid", "expired"])
+def test_all_protected_api_methods_reject_invalid_sessions(
+    tmp_path: Path, monkeypatch: Any, method: str, path_template: str, session_kind: str,
+) -> None:
+    def no_network(*args, **kwargs):
+        raise AssertionError("Authentication failure must not call external services")
+
+    monkeypatch.setattr(requests.Session, "request", no_network)
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    client = TestClient(app)
+    if session_kind == "invalid":
+        client.cookies.set(SESSION_COOKIE_NAME, str(uuid.uuid4()))
+    elif session_kind == "expired":
+        session_id = create_user_session(settings, github_user_id=101, github_login="synthetic-reviewer",
+                                         access_token="synthetic-expired-token",
+                                         expires_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+        client.cookies.set(SESSION_COOKIE_NAME, session_id)
+    path = path_template.format(owner="example", repo="notebooks", pull_number=7,
+                                snapshot_index=1, review_id=uuid.uuid4(),
+                                thread_id=uuid.uuid4(), asset_id=uuid.uuid4())
+    response = client.request(method, path, params={"installation_id": str(uuid.uuid4())}, json={})
+    assert response.status_code == 401, (method, path, response.status_code)
+    assert response.json()["detail"] in {"Authentication required", "Session expired"}
+    engine.dispose()
+
+
+@pytest.mark.parametrize("signature", [None, "sha256=invalid"])
+def test_webhook_endpoint_rejects_unsigned_or_invalid_events_before_processing(tmp_path: Path, signature):
+    settings = _settings(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    headers = {"X-GitHub-Event": "pull_request"}
+    if signature is not None:
+        headers["X-Hub-Signature-256"] = signature
+    response = TestClient(app).post("/api/github/webhooks", json=pull_request_payload(), headers=headers)
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("method,path_template", PROTECTED_API_ROUTES[:7])
+def test_review_api_methods_reject_authenticated_users_without_repo_access(
+    tmp_path: Path, monkeypatch: Any, method: str, path_template: str,
+) -> None:
+    def no_network(*args, **kwargs):
+        raise AssertionError("Denied repository access must not call external services")
+    monkeypatch.setattr(requests.Session, "request", no_network)
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    review_id, _ = create_ready_review_fixture(settings)
+    with session_scope(settings) as db_session:
+        snapshot = db_session.scalars(select(ReviewSnapshot)).one()
+        snapshot_id = str(snapshot.id)
+        thread = ReviewThread(managed_review_id=uuid.UUID(review_id), origin_snapshot_id=snapshot.id,
+                              current_snapshot_id=snapshot.id, origin_anchor_json={}, anchor_json={},
+                              created_by_github_user_id=101)
+        db_session.add(thread)
+        db_session.flush()
+        thread_id = str(thread.id)
+    fake_oauth = FakeOAuthClient(repo_access={("synthetic-denied", "octo-org", "notebooklens"): False})
+    fake_github = FakeManagedGitHubClient()
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_oauth_client] = lambda: fake_oauth
+    app.dependency_overrides[get_managed_github_client] = lambda: fake_github
+    client = TestClient(app)
+    client.cookies.set(SESSION_COOKIE_NAME, create_user_session(settings, github_user_id=303,
+                        github_login="denied-reviewer", access_token="synthetic-denied"))
+    path = path_template.format(owner="octo-org", repo="notebooklens", pull_number=7,
+                                snapshot_index=1, review_id=review_id, thread_id=thread_id)
+    response = client.request(method, path, json={"snapshot_id": snapshot_id, "anchor": {}, "body_markdown": "Denied comment"})
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Repository access denied"}
+    assert fake_github.check_run_calls == []
+    with session_scope(settings) as db_session:
+        assert db_session.scalars(select(ThreadMessage)).all() == []
+        assert db_session.scalars(select(NotificationOutbox)).all() == []
+    engine.dispose()
+
+
+@pytest.mark.parametrize("method,suffix", [("GET", ""), ("PUT", ""), ("POST", "/test")])
+def test_all_ai_settings_methods_require_installation_admin(tmp_path: Path, monkeypatch: Any, method, suffix):
+    def no_network(*args, **kwargs):
+        raise AssertionError("Denied settings access must not contact an AI provider")
+    monkeypatch.setattr(requests.Session, "request", no_network)
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    installation_id = create_github_installation_fixture(settings)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_oauth_client] = lambda: FakeOAuthClient()
+    client = TestClient(app)
+    client.cookies.set(SESSION_COOKIE_NAME, create_user_session(settings, github_user_id=303,
+                        github_login="non-admin", access_token="synthetic-non-admin"))
+    response = client.request(method, "/api/settings/ai-gateway" + suffix,
+        params={"installation_id": installation_id}, json={
+            "display_name": "Synthetic gateway", "github_host_kind": "github_com",
+            "github_api_base_url": "https://api.github.com", "github_web_base_url": "https://github.com",
+            "base_url": "https://provider.example.test", "model_name": "synthetic-model",
+            "api_key_header_name": "Authorization", "api_key": "synthetic-secret",
+        })
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Installation admin access required"}
+    with session_scope(settings) as db_session:
+        assert db_session.scalars(select(ManagedAiGatewayConfig)).all() == []
+    engine.dispose()
+
+
+@pytest.mark.parametrize("state_kind", ["missing", "mismatch", "expired"])
+def test_oauth_callback_rejects_bad_state_without_creating_session(tmp_path: Path, state_kind):
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_oauth_client] = lambda: FakeOAuthClient()
+    client = TestClient(app)
+    state = OAuthStateSigner(settings.session_secret).issue_state(
+        now=datetime.now(timezone.utc) - timedelta(hours=1) if state_kind == "expired" else None,
+    )
+    client.cookies.set(STATE_COOKIE_NAME, state if state_kind == "expired" else "different-state")
+    params = {"code": "synthetic-code"}
+    if state_kind != "missing":
+        params["state"] = state
+    response = client.get("/api/auth/github/callback", params=params, follow_redirects=False)
+    assert response.status_code == 302
+    assert "/api/auth/github/error?" in response.headers["location"]
+    with session_scope(settings) as db_session:
+        assert db_session.scalars(select(UserSession)).all() == []
+    engine.dispose()
+
+
+@pytest.fixture
+def homepage_client(tmp_path: Path, monkeypatch: Any):
+    def no_network(*args, **kwargs):
+        raise AssertionError("Homepage tests must not access external services")
+    monkeypatch.setattr(requests.Session, "request", no_network)
+    settings = _settings(tmp_path)
+    engine = get_engine(settings.database_url)
+    create_all_tables(engine)
+    installation_id = create_github_installation_fixture(settings)
+    oauth = FakeOAuthClient()
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_oauth_client] = lambda: oauth
+    client = TestClient(app)
+    client.cookies.set(SESSION_COOKIE_NAME, create_user_session(settings, github_user_id=101,
+                        github_login="synthetic-user", access_token="synthetic-home-token"))
+    yield client, settings, oauth, installation_id
+    engine.dispose()
+
+
+def _homepage_repository(context, *, index: int, name: str, active=True, reviews=1):
+    _, settings, _, installation_id = context
+    with session_scope(settings) as db_session:
+        repository = InstallationRepository(id=uuid.UUID(int=index), installation_id=uuid.UUID(installation_id),
+            owner="synthetic", name=name, full_name=f"synthetic/{name}", active=active, private=True)
+        db_session.add(repository)
+        db_session.flush()
+        for number in range(1, reviews + 1):
+            db_session.add(ManagedReview(installation_repository_id=repository.id, owner="synthetic", repo=name,
+                           pull_number=number, base_branch="main", latest_base_sha="base", latest_head_sha="head"))
+
+
+def test_homepage_session_returns_only_verified_identity(homepage_client):
+    client, _, oauth, _ = homepage_client
+    response = client.get("/api/session")
+    assert response.status_code == 200
+    assert response.json() == {"user": {"id": 101, "login": "synthetic-user"}}
+    assert response.headers["cache-control"] == "no-store"
+    assert "synthetic-home-token" not in response.text
+    assert oauth.repo_access_checks == []
+
+
+def test_homepage_omits_denied_and_inactive_repository_details(homepage_client):
+    client, _, oauth, _ = homepage_client
+    _homepage_repository(homepage_client, index=1, name="denied-private-name")
+    _homepage_repository(homepage_client, index=2, name="inactive-private-name", active=False)
+    _homepage_repository(homepage_client, index=3, name="allowed", reviews=9)
+    oauth.repo_access[("synthetic-home-token", "synthetic", "denied-private-name")] = False
+    response = client.get("/api/repositories")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "denied-private-name" not in response.text
+    assert "inactive-private-name" not in response.text
+    assert "synthetic-home-token" not in response.text
+    repositories = response.json()["repositories"]
+    assert len(repositories) == 1
+    assert repositories[0]["full_name"] == "synthetic/allowed"
+    assert len(repositories[0]["reviews"]) == 5
+    for review in repositories[0]["reviews"]:
+        assert review["href"] == f"/reviews/synthetic/allowed/pulls/{review['pull_number']}"
+        assert set(review) == {"id", "pull_number", "status", "href"}
+    assert response.json()["next_cursor"] is None
+    assert len(oauth.repo_access_checks) == 2
+
+
+def test_homepage_empty_filtered_page_has_opaque_continuation_and_bounded_checks(homepage_client):
+    client, _, oauth, _ = homepage_client
+    _homepage_repository(homepage_client, index=1, name="hidden-name")
+    _homepage_repository(homepage_client, index=2, name="visible-name")
+    oauth.repo_access[("synthetic-home-token", "synthetic", "hidden-name")] = False
+    first = client.get("/api/repositories", params={"limit": 1}).json()
+    assert first["repositories"] == []
+    assert first["next_cursor"] and "hidden-name" not in first["next_cursor"]
+    assert len(oauth.repo_access_checks) == 1
+    second = client.get("/api/repositories", params={"limit": 1, "cursor": first["next_cursor"]}).json()
+    assert [item["name"] for item in second["repositories"]] == ["visible-name"]
+    assert second["next_cursor"] is None
+    assert len(oauth.repo_access_checks) == 2
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 21}, {"cursor": "private/repository"}, {"cursor": "!" * 22}])
+def test_homepage_invalid_page_parameters_do_not_call_github(homepage_client, params):
+    client, _, oauth, _ = homepage_client
+    response = client.get("/api/repositories", params=params)
+    assert response.status_code in {400, 422}
+    assert oauth.repo_access_checks == []
+
+
+def test_homepage_access_is_rechecked_and_provider_failures_are_private(homepage_client):
+    client, _, oauth, _ = homepage_client
+    _homepage_repository(homepage_client, index=1, name="sample")
+    assert len(client.get("/api/repositories").json()["repositories"]) == 1
+    oauth.repo_access[("synthetic-home-token", "synthetic", "sample")] = False
+    assert client.get("/api/repositories").json()["repositories"] == []
+    assert len(oauth.repo_access_checks) == 2
+    def unavailable_provider(*args, **kwargs):
+        raise OAuthStateError("private-provider-response")
+    oauth.can_access_repository = unavailable_provider
+    response = client.get("/api/repositories")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Unable to verify repository access. Please retry."}
+    assert "private-provider-response" not in response.text
 
 
 def test_api_settings_load_and_normalize_private_key(tmp_path: Path) -> None:

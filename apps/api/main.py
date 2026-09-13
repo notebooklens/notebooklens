@@ -15,6 +15,7 @@ from .routes.assets import router as assets_router
 from .routes.auth import router as auth_router
 from .routes.github import router as github_router
 from .routes.health import router as health_router
+from .routes.home import router as home_router
 from .routes.reviews import router as reviews_router
 from .routes.settings import router as settings_router
 from .webhooks import GitHubWebhookVerificationError
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     """Create the managed NotebookLens FastAPI application."""
     app = FastAPI(title="NotebookLens Managed API", version=__display_version__)
     app.include_router(health_router)
+    app.include_router(home_router)
     app.include_router(github_router)
     app.include_router(auth_router)
     app.include_router(reviews_router)

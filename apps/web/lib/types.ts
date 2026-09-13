@@ -320,3 +320,14 @@ export type AiGatewayActionState = {
   form: AiGatewayFormValues;
   tested_endpoint: string | null;
 };
+export type SessionIdentity = { user: { id: number; login: string } };
+export type RepositoryPage = {
+  repositories: {
+    id: string;
+    owner: string;
+    name: string;
+    full_name: string;
+    reviews: { id: string; pull_number: number; status: string; href: string }[];
+  }[];
+  next_cursor: string | null;
+};

@@ -291,6 +291,82 @@ def test_plotly_output_preferred_over_static_image_fallback() -> None:
     assert item["spec"]["data"] == spec["data"]
 
 
+def test_plotly_mime_frames_are_not_silently_discarded() -> None:
+    for frames in [[{"name": "next", "data": [{"y": [2]}]}], None, {}, "invalid"]:
+        payload = _build_snapshot(
+            base_cells=[_code_cell("animated")],
+            head_cells=[_code_cell("animated", outputs=[_plotly_output({
+                "data": [{"type": "bar", "y": [1]}], "frames": frames,
+            })])],
+        )
+        item = _items(_rows_by_cell_id(payload)["animated"])[0]
+        assert item["kind"] == "placeholder"
+        assert "save a static Plotly figure" in item["summary"]
+
+
+def test_plotly_mime_empty_frames_preserve_static_rendering() -> None:
+    payload = _build_snapshot(
+        base_cells=[_code_cell("static")],
+        head_cells=[_code_cell("static", outputs=[_plotly_output({
+            "data": [{"type": "bar", "y": [1]}], "frames": [],
+        })])],
+    )
+    item = _items(_rows_by_cell_id(payload)["static"])[0]
+    assert item["kind"] == "plotly"
+    assert item["spec"]["data"] == [{"type": "bar", "y": [1]}]
+
+
+def _html_plot_item(html: Any) -> dict[str, Any]:
+    payload = _build_snapshot(
+        base_cells=[_code_cell("html-plot")],
+        head_cells=[_code_cell("html-plot", outputs=[{
+            "output_type": "display_data", "data": {"text/html": html},
+        }])],
+    )
+    return _items(_rows_by_cell_id(payload)["html-plot"])[0]
+
+
+def test_saved_plotly_html_extracts_literal_data_without_notebook_scripts() -> None:
+    data = [{"type": "bar", "x": ["A", "B"], "y": [3, 7]}]
+    layout = {"title": {"text": "Synthetic chart"}}
+    config = {"responsive": True}
+    html = '<div id="chart"></div><script>require(["plotly"], function(Plotly) { Plotly.newPlot(' + ", ".join(
+        json.dumps(value) for value in ["chart", data, layout, config]
+    ) + '); });</script>'
+    item = _html_plot_item([html[:40], html[40:]])
+    assert item["kind"] == "plotly"
+    assert item["spec"] == {"data": data, "layout": layout, "config": config}
+    assert "JavaScript is not executed" in item["summary"]
+    assert "require" not in json.dumps(item)
+
+
+def test_plotly_html_dynamic_multiple_animated_and_oversized_are_explicit_placeholders() -> None:
+    for html in [
+        '<script>Plotly.newPlot("chart", fetch("https://example.invalid"), {}, {});</script>',
+        '<script>Plotly.newPlot("chart", [{"y":[NaN]}], {}, {});</script>',
+        '<script>Plotly.newPlot("chart", [], {}, {}); Plotly.newPlot("other", [], {}, {});</script>',
+        '<script>Plotly.newPlot("chart", [], {}, {}); Plotly.addFrames("chart", []);</script>',
+        '<script>Plotly.newPlot("chart", [], {}, {});</script>' + " " * 8_388_608,
+    ]:
+        item = _html_plot_item(html)
+        assert item["kind"] == "placeholder"
+        assert item["mime_group"] == "plotly"
+        assert "unsupported HTML chart script" in item["summary"]
+
+
+def test_plain_html_stays_html_and_plotly_mime_takes_precedence() -> None:
+    assert _html_plot_item("<table><tr><td>42</td></tr></table>")["kind"] == "html"
+    assert _html_plot_item('<pre>Plotly.newPlot("chart", [], {}, {});</pre>')["kind"] == "html"
+    spec = {"data": [{"type": "bar", "y": [1]}]}
+    output = _plotly_output(spec)
+    output["data"]["text/html"] = '<script>Plotly.newPlot("chart", dynamic, {}, {});</script>'
+    payload = _build_snapshot(
+        base_cells=[_code_cell("preferred")],
+        head_cells=[_code_cell("preferred", outputs=[output])],
+    )
+    assert _items(_rows_by_cell_id(payload)["preferred"])[0]["spec"] == spec
+
+
 def test_plotly_output_malformed_is_visible_placeholder_not_broken_json() -> None:
     payload = _build_snapshot(
         base_cells=[_code_cell("bad-plot")],

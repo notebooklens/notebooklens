@@ -8,6 +8,10 @@ import type { RenderRow, ReviewThread, SnapshotNotebook, WorkspacePayload } from
 
 vi.stubGlobal("React", React);
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
+}));
+
 vi.mock("next/image", () => ({
   default: (props: Record<string, unknown>) => React.createElement("img", props),
 }));
@@ -472,10 +476,10 @@ describe("review workspace rendering", () => {
     expect(markup).not.toContain("Where to look first");
     expect(markup).not.toContain("Review signals");
     expect(markup).not.toContain("Workspace access");
-    expect(markup).toContain("What needs attention");
+    expect(markup).not.toContain("What needs attention");
     expect(markup).toContain("Check the staged benchmark inputs before merging.");
-    expect(markup).toContain("Validation accuracy regressed in the benchmark output.");
-    expect(markup).toContain("Confirm whether the metric drop is expected for this push.");
+    expect(markup).not.toContain("Validation accuracy regressed in the benchmark output.");
+    expect(markup).not.toContain("Confirm whether the metric drop is expected for this push.");
     expect(markup).toContain("First changed row: Cell 2. Metric output changed.");
     expect(markup).toContain("1 open thread.");
     expect(markup).toContain("1 notebook note.");
@@ -679,6 +683,29 @@ describe("review workspace rendering", () => {
     expect(markup).toContain("code-diff-line-removed");
     expect(markup).toContain("code-diff-line-added");
     expect(markup).toContain("code-diff-line-unchanged");
+  });
+
+  it.each(["added", "deleted", "removed"])("marks all source lines and cell badges for a whole %s cell", (changeType) => {
+    const added = changeType === "added";
+    const markup = renderWorkspace(buildRow({
+      change_type: changeType,
+      source: { base: added ? null : "old_value = 1\nprint(old_value)", head: added ? "new_value = 2\nprint(new_value)" : null, changed: true },
+    }));
+    expect(markup.match(new RegExp(`code-diff-line-${added ? "added" : "removed"}`, "g"))).toHaveLength(2);
+    expect(markup).not.toContain("code-diff-line-unchanged");
+    expect(markup).toContain(`tone-${added ? "success" : "danger"}`);
+    expect(markup).toContain(`aria-label="${added ? "Added" : "Removed"}"`);
+  });
+
+  it.each(["added", "deleted"])("renders whole %s Markdown with a matching tint class and explicit label", (changeType) => {
+    const added = changeType === "added";
+    const markup = renderWorkspace(buildRow({
+      change_type: changeType, cell_type: "markdown",
+      source: { base: added ? null : "# Old report", head: added ? "# New report" : null, changed: true },
+    }));
+    expect(markup).toContain(`markdown-pane-${added ? "added" : "removed"}`);
+    expect(markup).toContain(added ? "Added cell" : "Removed cell");
+    expect(markup).toContain(added ? "<h1>New report</h1>" : "<h1>Old report</h1>");
   });
 
   it("renders thread reply markdown instead of raw asterisks", () => {

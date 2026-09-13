@@ -8,6 +8,9 @@ let server: Server;
 let origin: string;
 test.beforeAll(async () => {
   const result = await build({ entryPoints: [path.join(__dirname, "workspace-harness.tsx")], bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "test-next-components", setup(builder) {
+    // Synthetic navigation only: this harness does not fetch Next server-component data.
+    builder.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: "router", namespace: "test-router" }));
+    builder.onLoad({ filter: /.*/, namespace: "test-router" }, () => ({ contents: "export function useRouter(){return {replace(path){history.replaceState(null,'',path)},refresh(){window.dispatchEvent(new Event('test-router-refresh'))}}}", loader: "js" }));
     builder.onResolve({ filter: /^next\/(image|link)$/ }, (args) => ({ path: args.path, namespace: "test-next" }));
     builder.onLoad({ filter: /.*/, namespace: "test-next" }, (args) => ({ contents: `import React from 'react'; export default function Component({children, ...props}) { return React.createElement('${args.path.endsWith("image") ? "img" : "a"}', props, children); }`, loader: "js", resolveDir: path.join(__dirname, "..") }));
   } }] });
@@ -53,6 +56,23 @@ test("GitHub-style addition and deletion colors keep signs and neutral gaps", as
   await expect(page.locator(".code-diff-line-unchanged").first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.locator(".notebook-card").screenshot({ path: info.outputPath("github-style-diff.png") });
   await page.goto(origin + "?added");
-  await expect(page.locator(".code-diff-line-added, .code-diff-line-removed")).toHaveCount(0);
-  await expect(page.locator(".code-diff-line-unchanged").first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.locator(".code-diff-line-added")).toHaveCount(4);
+  await expect(page.locator(".code-diff-line-added").first()).toHaveCSS("background-color", "rgb(230, 255, 236)");
+  await expect(page.locator(".code-diff-line-added .code-diff-line-marker").first()).toHaveText("+");
+});
+
+test("whole-cell and notebook additions/deletions have matching source and badge colors", async ({ page }, info) => {
+  for (const [kind, cssKind, background, marker] of [["added", "success", "rgb(230, 255, 236)", "+"], ["deleted", "danger", "rgb(255, 235, 233)", "−"]]) {
+    await page.goto(`${origin}?${kind}`);
+    await expect(page.locator(`.notebook-head .tone-${cssKind}`)).toHaveCSS("background-color", background);
+    await expect(page.locator(`.cell-card-meta .tone-${cssKind}`)).toHaveCSS("background-color", background);
+    await expect(page.locator(`.output-meta .tone-${cssKind}`).first()).toHaveCSS("background-color", background);
+    await expect(page.locator(".code-diff-line-marker").first()).toHaveText(marker);
+    await page.screenshot({ path: info.outputPath(`whole-code-${kind}.png`), fullPage: true });
+    await page.goto(`${origin}?${kind}&markdown`);
+    await expect(page.locator(".markdown-pane")).toHaveCSS("background-color", background);
+    await expect(page.locator(".markdown-change-marker")).toHaveText(marker);
+    await expect(page.getByText(kind === "added" ? "Added cell" : "Removed cell", { exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`whole-markdown-${kind}.png`), fullPage: true });
+  }
 });

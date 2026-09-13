@@ -18,7 +18,8 @@ completed live acceptance or permission to retire a license.
 Read [replacement scope](docs/replacement-plan.md),
 [notebook review UX](docs/review-ux-plan.md),
 [frontend guidelines](docs/frontend-guidelines.md),
-[local acceptance](docs/local-acceptance.md), and
+[local acceptance](docs/local-acceptance.md),
+[platform deployment integration](docs/platform-deployment.md), and
 [dependency security](docs/security-dependencies.md) before related changes.
 These contain historical milestones as well as gaps: verify current code and
 deployment evidence instead of treating an early plan paragraph as current
@@ -77,6 +78,7 @@ npm run lint
 npm run build
 npx playwright install chromium firefox webkit
 npm run test:e2e
+NOTEBOOKLENS_NEXT_INTEGRATION=1 npm run test:e2e -- e2e/thread-next-integration.spec.ts --project=chromium --workers=1
 npm audit --omit=dev
 ```
 
@@ -87,11 +89,26 @@ and lockfiles together, inspect full audit results too, and do not force major
 upgrades without compatibility testing. CI is not a substitute for browser or
 authenticated live workflow acceptance.
 
+Before calling a PR ready, run the **full backend test suite** and audit every
+registered API path/method against test coverage; a passing test count alone is
+not evidence that every API works. Cover successful operations, malformed input,
+missing/expired authentication, insufficient permissions, missing resources,
+and upstream failures where applicable. For discussion changes, exercise create,
+reply, resolve, and reopen through both the web action boundary and API, including
+draft retention and visible errors. Run the opt-in real-Next integration above
+when changing comment forms/navigation; the default mocked-router suite cannot
+prove server refresh preserves other drafts. Use isolated databases, synthetic identities,
+and mocked GitHub/AI/email boundaries; never test destructive or billable actions
+against a real deployment without explicit authorization. Report endpoint gaps,
+skips, and which checks are mocked versus authenticated live acceptance. After a
+local restart, verify that the running service versions and schema support the
+tested UI contract; health checks alone do not prove comment submission works.
+
 ## Notebook-first acceptance criteria
 
 Reviewers must understand notebook changes without interpreting raw JSON.
 Provide clear aligned before/after code, source line context, readable outputs,
-neutral presentation of wholly added cells, and no metadata review chrome.
+green additions and red removals (including whole cells), and no metadata review chrome.
 Preserve existing metadata-anchored conversations in Discussions. Read the
 frontend guidelines in full before UI changes; `apps/web/AGENTS.md` adds the
 frontend-specific verification requirements.

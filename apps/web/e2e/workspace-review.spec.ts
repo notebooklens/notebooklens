@@ -8,6 +8,9 @@ let server: Server;
 let origin: string;
 test.beforeAll(async () => {
   const result = await build({ entryPoints: [path.join(__dirname, "workspace-harness.tsx")], bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "test-next-components", setup(builder) {
+    // Synthetic navigation only: this harness does not fetch Next server-component data.
+    builder.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: "router", namespace: "test-router" }));
+    builder.onLoad({ filter: /.*/, namespace: "test-router" }, () => ({ contents: "export function useRouter(){return {replace(path){history.replaceState(null,'',path)},refresh(){window.dispatchEvent(new Event('test-router-refresh'))}}}", loader: "js" }));
     builder.onResolve({ filter: /^next\/(image|link)$/ }, (args) => ({ path: args.path, namespace: "test-next" }));
     builder.onLoad({ filter: /.*/, namespace: "test-next" }, (args) => ({ contents: `import React from 'react'; export default function Component({children, ...props}) { return React.createElement('${args.path.endsWith("image") ? "img" : "a"}', props, children); }`, loader: "js", resolveDir: path.join(__dirname, "..") }));
   } }] });
@@ -87,11 +90,13 @@ test("same-hash navigation reopens ancestors and empty before source keeps align
   await expect(page.getByRole("heading", { name: "Discussions on this push" })).toBeVisible();
 });
 
-test("added cells show one neutral source version", async ({ page }, info) => {
+test("added cells show one green source version with plus markers", async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto(`${origin}?added`);
   await expect(page.locator(".aligned-code-grid")).toHaveCount(0);
-  await expect(page.locator(".code-diff-line-added")).toHaveCount(0);
+  await expect(page.locator(".code-diff-line-added")).toHaveCount(4);
+  await expect(page.locator(".code-diff-line-added").first()).toHaveCSS("background-color", "rgb(230, 255, 236)");
+  await expect(page.locator(".code-diff-line-marker").first()).toHaveText("+");
   await expect(page.getByText("Added cell", { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath("added-notebook.png"), fullPage: true });
   await page.getByLabel("Show outputs", { exact: true }).uncheck();
@@ -123,6 +128,8 @@ test("deleted cells retain their original source and output with previous versio
   await page.goto(origin + "?deleted");
   await expect(page.getByText("Removed cell", { exact: true })).toBeVisible();
   await expect(page.locator(".code-diff-line-content")).toHaveText("retired_metric = 15");
+  await expect(page.locator(".code-diff-line-removed")).toHaveCSS("background-color", "rgb(255, 235, 233)");
+  await expect(page.locator(".code-diff-line-marker")).toHaveText("−");
   await expect(page.getByText("Retired saved output", { exact: true })).toBeVisible();
   await expect(page.getByText("After", { exact: true })).toHaveCount(0);
   await page.getByLabel("Show previous version", { exact: true }).uncheck();

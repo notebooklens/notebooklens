@@ -6,7 +6,9 @@ import base64
 import binascii
 from dataclasses import dataclass
 import hashlib
+from html.parser import HTMLParser
 import json
+import re
 import struct
 from typing import Any, Dict, List, Literal, Optional, Protocol, Sequence, Union
 
@@ -746,6 +748,73 @@ def _validate_plotly_spec(raw_spec: Any) -> Dict[str, Any] | None:
     return spec
 
 
+class _SavedPlotlyScripts(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.in_script = False
+        self.scripts: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        self.in_script = tag == "script"
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script":
+            self.in_script = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_script:
+            self.scripts.append(data)
+
+
+def _plotly_spec_from_html(raw_html: Any) -> Dict[str, Any] | None:
+    """Recover saved JSON arguments, never evaluate notebook JavaScript.
+
+    Plotly's HTML renderer saves a newPlot call instead of the Plotly MIME.
+    Only one literal-data figure is supported; dynamic expressions and frame
+    scripts must not silently become an incomplete static chart.
+    """
+    if isinstance(raw_html, list) and all(isinstance(part, str) for part in raw_html):
+        raw_html = "".join(raw_html)
+    if not isinstance(raw_html, str) or "Plotly.newPlot" not in raw_html:
+        return None
+    # Exported HTML may include the bundled library (>5 MB). Bound parsing
+    # separately from the much smaller extracted data limit below.
+    if len(raw_html) > 8_388_608:
+        return {}
+    parser = _SavedPlotlyScripts()
+    parser.feed(raw_html)
+    raw_html = "\n".join(parser.scripts)
+    if "Plotly.newPlot" not in raw_html:
+        return None
+    calls = list(re.finditer(r"\bPlotly\.newPlot\s*\(", raw_html))
+    if len(calls) != 1 or re.search(r"\bPlotly\.(?:addFrames|animate|react|restyle|relayout)\s*\(", raw_html):
+        return {}
+
+    def reject_constant(value: str) -> Any:
+        raise ValueError("Non-JSON numeric constant")
+
+    decoder = json.JSONDecoder(parse_constant=reject_constant)
+    position = calls[0].end()
+    arguments: List[Any] = []
+    try:
+        for index in range(4):
+            while position < len(raw_html) and raw_html[position].isspace():
+                position += 1
+            value, position = decoder.raw_decode(raw_html, position)
+            arguments.append(value)
+            while position < len(raw_html) and raw_html[position].isspace():
+                position += 1
+            expected = ")" if index == 3 else ","
+            if raw_html[position:position + 1] != expected:
+                return {}
+            position += 1
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(arguments[0], str) or not isinstance(arguments[2], dict) or not isinstance(arguments[3], dict):
+        return {}
+    return {"data": arguments[1], "layout": arguments[2], "config": arguments[3]}
+
+
 def _build_plotly_output_item(
     data: Dict[str, Any],
     *,
@@ -753,17 +822,30 @@ def _build_plotly_output_item(
     change_type: OutputItemChangeType,
     side: OutputItemSide | None,
 ) -> Dict[str, Any] | None:
-    if _PLOTLY_MIME_TYPE not in data:
+    from_html = _PLOTLY_MIME_TYPE not in data
+    raw_spec = data.get(_PLOTLY_MIME_TYPE) if not from_html else _plotly_spec_from_html(data.get("text/html"))
+    if from_html and raw_spec is None:
         return None
 
-    validated_spec = _validate_plotly_spec(data.get(_PLOTLY_MIME_TYPE))
+    if isinstance(raw_spec, dict) and "frames" in raw_spec and raw_spec["frames"] != []:
+        return _with_side(
+            _interactive_placeholder(
+                output_type=output_type,
+                mime_group="plotly",
+                change_type=change_type,
+                reason="animation frames are not supported; save a static Plotly figure for review",
+            ),
+            side,
+        )
+
+    validated_spec = _validate_plotly_spec(raw_spec)
     if validated_spec is None:
         return _with_side(
             _interactive_placeholder(
                 output_type=output_type,
                 mime_group="plotly",
                 change_type=change_type,
-                reason="malformed plot data",
+                reason="unsupported HTML chart script; save Plotly JSON output" if from_html else "malformed plot data",
             ),
             side,
         )
@@ -784,7 +866,7 @@ def _build_plotly_output_item(
         {
             "kind": "plotly",
             "spec": validated_spec,
-            "summary": "Plotly output updated",
+            "summary": "Saved Plotly data; custom JavaScript is not executed" if from_html else "Plotly output updated",
             "truncated": False,
             "change_type": change_type,
         },

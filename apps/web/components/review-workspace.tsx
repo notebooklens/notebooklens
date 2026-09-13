@@ -11,6 +11,7 @@ import { buildApiHref, buildLoginHref } from "@/lib/public-hrefs";
 import { computeLineDiff, type DiffLine } from "@/lib/code-diff";
 import { buildSandboxedHtmlDocument } from "@/lib/html-output";
 import { InteractiveOutputFrame } from "@/components/interactive-output-frame";
+import { ThreadMutationForm } from "@/components/thread-mutation-form";
 import {
   buildAnchorKey,
   buildAiGatewayRoute,
@@ -26,8 +27,6 @@ import {
   hasMeaningfulBlockContent,
   isBlockChanged,
   summarizeGitHubMirrorStatus,
-  summarizeFinding,
-  summarizeGuidance,
   toggleThreadComposer,
 } from "@/lib/review-workspace";
 import type {
@@ -358,10 +357,6 @@ function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOvervi
   const changedRows = visibleNotebooks.map((notebook) => notebook.render_rows.filter((row) => (["source", "outputs"] as const).some((kind) => isBlockChanged(row, kind) && hasMeaningfulBlockContent(row, kind))));
   const changedNotebookCount = changedRows.filter((rows) => rows.length > 0).length;
   const changedCellCount = changedRows.reduce((count, rows) => count + rows.length, 0);
-  const reviewSignalCount =
-    snapshot.payload.review.notices.length +
-    snapshot.flagged_findings.length +
-    snapshot.reviewer_guidance.length;
 
   return (
     <section className="summary-card snapshot-overview-card">
@@ -379,59 +374,9 @@ function SnapshotOverview({ review, snapshot, visibleNotebooks }: SnapshotOvervi
       {snapshot.summary_text ? (
         <p className="summary-text snapshot-summary-text">{snapshot.summary_text}</p>
       ) : null}
-      {reviewSignalCount > 0 ? (
-        <details className="snapshot-disclosure">
-          <summary>
-            <span>
-              What needs attention
-              <span className="history-caption notebook-jump-summary-copy">
-                {reviewSignalCount} item{reviewSignalCount === 1 ? "" : "s"}
-              </span>
-            </span>
-            <span className="muted-copy">Expand</span>
-          </summary>
-          <div className="snapshot-disclosure-panel">
-            {snapshot.payload.review.notices.length ? (
-              <div className="sidebar-subsection">
-                <p className="sidebar-subtitle">Heads up</p>
-                <ul className="chip-list">
-                  {snapshot.payload.review.notices.map((notice) => (
-                    <li className="chip-item" key={notice}>
-                      {notice}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {snapshot.flagged_findings.length ? (
-              <div className="sidebar-subsection">
-                <p className="sidebar-subtitle">Flagged findings</p>
-                <ul className="text-list">
-                  {snapshot.flagged_findings.map((finding, index) => (
-                    <li key={`${finding.code ?? "finding"}-${index}`}>
-                      {summarizeFinding(finding)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {snapshot.reviewer_guidance.length ? (
-              <div className="sidebar-subsection">
-                <p className="sidebar-subtitle">Reviewer guidance</p>
-                <ul className="text-list">
-                  {snapshot.reviewer_guidance.map((guidance, index) => (
-                    <li key={`${guidance.label ?? "guidance"}-${index}`}>
-                      {summarizeGuidance(guidance)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
+      {snapshot.payload.review.notices.map((notice) => (
+        <p className="muted-copy" role="note" key={notice}>{notice}</p>
+      ))}
       <details className="snapshot-disclosure">
         <summary>Push details</summary>
         <div className="snapshot-disclosure-panel">
@@ -513,7 +458,7 @@ function NotebookCard({
           <h2>{fileLabel}</h2>
           <p className="notebook-subpath">{directoryLabel}</p>
         </div>
-        <StatusPill label={formatChangeTypeLabel(notebook.change_type)} tone="default" />
+        <StatusPill label={formatChangeTypeLabel(notebook.change_type)} tone={outputChangeTone(notebook.change_type)} />
       </summary>
 
       <p className="notebook-review-summary">{notebookReviewSummary}</p>
@@ -632,7 +577,7 @@ function CellRowCard({
           <span className="cell-row-heading-detail">{formatCellTypeLabel(row.cell_type)}</span>
         </h3>
         <div className="cell-card-meta cell-card-meta-inline">
-          <StatusPill label={formatRowChangeLabel(row.change_type)} tone="default" />
+          <StatusPill label={formatRowChangeLabel(row.change_type)} tone={outputChangeTone(row.change_type)} />
           {row.change_type === "moved" && row.locator.base_index !== null && row.locator.head_index !== null ? <span>Cell {row.locator.base_index + 1} → {row.locator.head_index + 1}</span> : null}
         </div>
       </div>
@@ -714,8 +659,8 @@ function BlockContent({
       const value = removed ? row.source.base : row.source.head;
       const label = removed ? "Removed cell" : row.change_type === "added" ? "Added cell" : "Current version";
       const singleDiff = computeLineDiff(row.source.base, row.source.head);
-      const lines = row.change_type === "added" || removed ? value?.split("\n").map((content, index) => ({ content, lineNumber: index + 1, status: "unchanged" as const })) : singleDiff.headLines;
-      return row.cell_type === "markdown" ? <MarkdownPane label={label} value={value} /> : <>{!singleDiff.bounded ? <p role="note">Large cell: showing full source without computed change highlighting.</p> : null}<CodePane label={label} value={value} diffLines={lines} /></>;
+      const lines = row.change_type === "added" || removed ? value?.split("\n").map((content, index) => ({ content, lineNumber: index + 1, status: removed ? "removed" as const : "added" as const })) : singleDiff.headLines;
+      return row.cell_type === "markdown" ? <MarkdownPane label={label} value={value} change={removed ? "removed" : row.change_type === "added" ? "added" : undefined} /> : <>{!singleDiff.bounded && row.change_type !== "added" && !removed ? <p role="note">Large cell: showing full source without computed change highlighting.</p> : null}<CodePane label={label} value={value} diffLines={lines} /></>;
     }
     if (row.cell_type === "markdown") {
       return (
@@ -968,12 +913,15 @@ function CodePane({
 function MarkdownPane({
   label,
   value,
+  change,
 }: {
   label: string;
   value: string | null;
+  change?: "added" | "removed";
 }) {
   return (
-    <div className="code-pane markdown-pane">
+    <div className={`code-pane markdown-pane${change ? ` markdown-pane-${change}` : ""}`}>
+      {change ? <span className="markdown-change-marker" aria-hidden="true">{change === "added" ? "+" : "−"}</span> : null}
       <span className="code-pane-label">{label}</span>
       {value && value.length > 0 ? (
         <div className="markdown-body">
@@ -1074,11 +1022,12 @@ function InlineThreadComposer({
   }, []);
 
   return (
-    <form
+    <ThreadMutationForm
       action={buildWorkspaceActionPath("create-thread")}
       className="thread-form thread-form-inline"
       id={composerId}
       method="post"
+      onSuccess={() => drafts?.delete(draftKey)}
     >
       <input name="returnTo" type="hidden" value={currentPath} />
       <input name="reviewId" type="hidden" value={reviewId} />
@@ -1108,7 +1057,7 @@ function InlineThreadComposer({
           Comment
         </button>
       </div>
-    </form>
+    </ThreadMutationForm>
   );
 }
 
@@ -1209,7 +1158,7 @@ function ThreadCard({
       <div className="thread-actions">
         <details className="reply-details">
           <summary>Reply</summary>
-          <form
+          <ThreadMutationForm
             action={buildWorkspaceActionPath("reply-thread")}
             className="thread-form thread-form-reply"
             method="post"
@@ -1229,25 +1178,25 @@ function ThreadCard({
                 Add reply
               </button>
             </div>
-          </form>
+          </ThreadMutationForm>
         </details>
 
         {thread.status === "resolved" ? (
-          <form action={buildWorkspaceActionPath("reopen-thread")} method="post">
+          <ThreadMutationForm action={buildWorkspaceActionPath("reopen-thread")} pendingLabel="Reopening…">
             <input name="returnTo" type="hidden" value={`${currentPath.split("#")[0]}#${sectionId}`} />
             <input name="threadId" type="hidden" value={thread.id} />
             <button className="secondary-button" type="submit">
               Reopen
             </button>
-          </form>
+          </ThreadMutationForm>
         ) : (
-          <form action={buildWorkspaceActionPath("resolve-thread")} method="post">
+          <ThreadMutationForm action={buildWorkspaceActionPath("resolve-thread")} pendingLabel="Resolving…">
             <input name="returnTo" type="hidden" value={`${currentPath.split("#")[0]}#${sectionId}`} />
             <input name="threadId" type="hidden" value={thread.id} />
             <button className="secondary-button" type="submit">
               Resolve
             </button>
-          </form>
+          </ThreadMutationForm>
         )}
       </div>
     </details>
@@ -1496,13 +1445,13 @@ function threadTone(status: ReviewThread["status"]): "accent" | "success" | "war
 
 
 function outputChangeTone(
-  changeType: "added" | "removed" | "modified",
-): "accent" | "warning" | "default" {
+  changeType: string,
+): "success" | "danger" | "default" {
   if (changeType === "added") {
-    return "accent";
+    return "success";
   }
-  if (changeType === "removed") {
-    return "warning";
+  if (changeType === "removed" || changeType === "deleted") {
+    return "danger";
   }
   return "default";
 }

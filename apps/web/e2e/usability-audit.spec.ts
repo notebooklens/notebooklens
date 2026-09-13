@@ -11,6 +11,9 @@ let bundleBytes = 0;
 const artifacts = path.resolve(__dirname, "../../../DESIGN-IS-2026-09-13");
 test.beforeAll(async () => {
   const result = await build({ entryPoints: [path.join(__dirname, "usability-audit-harness.tsx")], bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "audit-next-components", setup(builder) {
+    // Synthetic navigation only: this harness does not fetch Next server-component data.
+    builder.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: "router", namespace: "test-router" }));
+    builder.onLoad({ filter: /.*/, namespace: "test-router" }, () => ({ contents: "export function useRouter(){return {replace(path){history.replaceState(null,'',path)},refresh(){window.dispatchEvent(new Event('test-router-refresh'))}}}", loader: "js" }));
     builder.onResolve({ filter: /^next\/(image|link)$/ }, (args) => ({ path: args.path, namespace: "audit-next" }));
     builder.onLoad({ filter: /.*/, namespace: "audit-next" }, (args) => ({ contents: `import React from 'react'; export default function Component({children, ...props}) { return React.createElement('${args.path.endsWith("image") ? "img" : "a"}', props, children); }`, loader: "js", resolveDir: path.join(__dirname, "..") }));
   } }] });

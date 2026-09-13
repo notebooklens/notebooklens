@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import type {
   AiGatewaySettingsResponse,
   WorkspacePayload,
+  SessionIdentity,
+  RepositoryPage,
 } from "@/lib/types";
 
 
@@ -35,6 +37,16 @@ export async function getReviewWorkspace(
   return apiRequest<WorkspacePayload>(
     `/api/reviews/${owner}/${repo}/pulls/${pullNumber}`,
   );
+}
+
+export async function getSessionIdentity(): Promise<SessionIdentity> {
+  return apiRequest<SessionIdentity>("/api/session");
+}
+
+export async function getRepositories(cursor?: string): Promise<RepositoryPage> {
+  const query = new URLSearchParams({ limit: "10" });
+  if (cursor) query.set("cursor", cursor);
+  return apiRequest<RepositoryPage>(`/api/repositories?${query.toString()}`);
 }
 
 

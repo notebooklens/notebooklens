@@ -12,7 +12,10 @@ const row = buildRow({
   ] },
   metadata: { changed: true, summary: "Cell tags changed." },
 });
-if (window.location.search.includes("added")) { row.change_type = "added"; row.source.base = null; }
+if (window.location.search.includes("added")) {
+  row.change_type = "added"; row.source.base = null;
+  row.outputs.items = row.outputs.items.filter((item) => item.side === "head").map((item) => ({ ...item, change_type: "added" }));
+}
 if (window.location.search.includes("empty")) { row.source.base = ""; row.source.head = "first\nsecond"; }
 if (window.location.search.includes("deleted")) {
   row.change_type = "deleted";
@@ -27,6 +30,13 @@ if (window.location.search.includes("moved")) {
   row.outputs = { changed: false, items: [] };
 }
 const workspace = buildWorkspace(row);
+if (window.location.search.includes("added")) workspace.snapshot!.payload.review.notebooks[0].change_type = "added";
+if (window.location.search.includes("deleted")) workspace.snapshot!.payload.review.notebooks[0].change_type = "deleted";
+if (window.location.search.includes("markdown")) {
+  row.cell_type = "markdown";
+  row.source = { base: row.change_type === "added" ? null : "# Previous report\nRemoved explanation.", head: row.change_type === "deleted" ? null : "# New report\nAdded explanation.", changed: true };
+  for (const anchor of Object.values(row.thread_anchors)) anchor.cell_type = "markdown";
+}
 workspace.threads = [buildThread(row)];
 if (window.location.search.includes("metadata-only")) {
   row.source.changed = false;

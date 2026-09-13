@@ -145,3 +145,22 @@ This is bootstrap evidence only. GitHub App credentials were still placeholders:
 no live installation, OAuth sign-in, webhook-driven PR review, or authenticated
 review acceptance has passed. The temporary tunnel URL is intentionally not
 recorded here because it is ephemeral and is not a production deployment.
+
+## Data-preserving pilot update — 2026-09-14
+
+The web/API/worker were rebuilt together for the repository homepage, thread
+action redirects, and saved Plotly HTML extraction. A private mode-0600 database
+backup was restored into a disposable PostgreSQL database and successfully
+upgraded from `20260413_0006` to `20260913_0007`. API/worker writes were then paused,
+a fresh private cutover backup was taken, and the active database received the
+same additive migration. Aggregate review/snapshot/thread counts were unchanged.
+The temporary restore-check database was removed; the private backups remain
+outside the checkout. No volumes were deleted.
+
+The matching services restarted successfully. Local checks verified the new
+homepage returns 200, API health returns 200, anonymous `/api/session` returns
+401, and malformed pre-API thread submissions return a safe relative 303 or a
+JSON 400. These probes create no comments. Stored snapshots are immutable:
+backend Plotly extraction changes require a newly prepared snapshot, not just
+a browser refresh. These deployment checks do not establish authenticated live
+GitHub commenting or complete ReviewNB/Plotly parity.

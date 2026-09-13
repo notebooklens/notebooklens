@@ -2097,6 +2097,24 @@ pre {
   color: #82071e;
 }
 
+.thread-mutation-fields {
+  display: contents;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.thread-mutation-error {
+  padding: var(--ui-space-3, 12px);
+  border: 1px solid #cf222e;
+  border-radius: var(--ui-radius-control, 6px);
+  background: #ffebe9;
+  color: #82071e;
+}
+
+.thread-mutation-error p { margin: 0; }
+
 .code-diff-line-added .code-diff-line-marker { color: #1a7f37; }
 .code-diff-line-removed .code-diff-line-marker { color: #cf222e; }
 
@@ -2134,6 +2152,13 @@ body:has(.notebook-document-workspace)::before { display: none; }
 .notebook-document-workspace :is(.status-pill,.workspace-pr-number,.chip-item) { border-radius: var(--review-radius-small); box-shadow: none; font-size: 12px; }
 .notebook-document-workspace .tone-default { background: var(--review-subtle); color: var(--review-muted); }
 .notebook-document-workspace .tone-accent { background: #ddf4ff; color: #0550ae; }
+.notebook-document-workspace .tone-success { background: #e6ffec; color: #116329; }
+.notebook-document-workspace .tone-danger { background: #ffebe9; color: #a40e26; }
+.notebook-document-workspace .code-pane.markdown-pane-added { background: #e6ffec; color: #1f2328; }
+.notebook-document-workspace .code-pane.markdown-pane-removed { background: #ffebe9; color: #1f2328; }
+.markdown-change-marker { font-weight: 600; margin-right: 8px; }
+.markdown-pane-added .markdown-change-marker { color: #1a7f37; }
+.markdown-pane-removed .markdown-change-marker { color: #cf222e; }
 .notebook-document-workspace .text-link { color: var(--review-accent); }
 .notebook-document-workspace .workspace-grid { display: flex; flex-direction: column; }
 .notebook-document-workspace .workspace-main { width: 100%; min-width: 0; }
@@ -2183,6 +2208,7 @@ body:has(.notebook-document-workspace)::before { display: none; }
 .notebook-document-workspace .snapshot-summary-text { flex-basis: 100%; margin: 0; font-size: 13px; }
 .notebook-document-workspace .thread-details[open] > summary .thread-preview { display: none; }
 .notebook-document-workspace .output-side .output-meta .status-pill { display: none; }
+.notebook-document-workspace .output-side .output-meta :is(.tone-success, .tone-danger) { display: inline-flex; }
 .notebook-document-workspace .sidebar-disclosure { padding: 12px; background: transparent; }
 .notebook-document-workspace .sidebar-disclosure .sidebar-disclosure-summary > .muted-copy { display: none; }
 .notebook-document-workspace :is(.snapshot-disclosure,.sidebar-disclosure,.workspace-utility-card,.review-navigation-disclosure) > summary {

@@ -55,7 +55,7 @@ Check the current source and verification evidence before treating a gap as open
    output-only changes, metadata-only changes and keyboard/thread interactions.
    Do not treat the current all-added fixture PR as sufficient diff acceptance.
 6. Present expandable notebook documents rather than a grid of cell cards.
-   Added notebooks use a neutral, single-version view; modified cells use
+   Added/deleted notebooks use a green/red single-version view with markers; modified cells use
    aligned comparisons. Provide accessible gutter comment buttons, outputs and
    previous-version visibility controls, and Changes/Discussions navigation.
    Open discussions stay adjacent to their cell. No full-height dashboard rail.
@@ -63,7 +63,7 @@ Check the current source and verification evidence before treating a gap as open
 ## Current refinement direction
 
 Use [the shared frontend guidelines](frontend-guidelines.md): green additions,
-red deletions, textual markers, neutral wholly added cells, and one compact
+red deletions, textual markers (including wholly added/deleted cells), and one compact
 token-based theme instead of pill-shaped cards and decorative chrome. Keep
 one-based cell labels consistent, show moved-only cells, and preserve drafts
 when changing comment blocks and review views. Broader navigation/error recovery
@@ -85,7 +85,7 @@ passed. The optional observational audit
 cases were explicitly skipped by their opt-in gate, not counted as passing tests.
 
 Regression coverage exercises red/green source changes with textual markers,
-neutral added cells, moved-only visibility, matching one-based comment labels,
+the then-neutral added cells, moved-only visibility, matching one-based comment labels,
 comment-draft restoration between blocks, metadata-free Changes with existing
 metadata discussions preserved, and narrow-screen layouts. Shared disclosure
 radii and reply/resolve layout have computed-style checks.
@@ -103,13 +103,26 @@ checked not to echo supplied header names/values. AI light/dark and reduced-moti
 presentation were exercised; this is not a claim of application-wide WCAG AA
 conformance or completed full-notebook/real-provider acceptance.
 
+### Latest whole-cell color direction
+
+The user subsequently requested that additions be green and removals red,
+including whole added/deleted cells. This supersedes the earlier neutral-added
+rule. Keep a single source pane for one-sided cells, but show every source line
+with its addition/deletion color and plus/minus marker. Whole-cell Markdown
+uses the matching tint and explicit Added/Removed label; notebook, cell and
+output badges use the same semantics. Do not alter image or chart pixels.
+Verification of this subsequent slice is recorded separately from the earlier
+130-unit/57-browser milestone above.
+
 ## Phase 2: signed-in entry and integration
 
-Implement a session-aware homepage with access-filtered review links; invalid
+The session-aware homepage and access-filtered repository/review APIs are now
+implemented and covered by isolated tests. The homepage is a repository picker,
+not a static marketing illustration; it does not fabricate notebook or commit
+browsing. Invalid
 sessions still get sign-in. No tokens or private unauthorized repository names
-in responses. Independently review the pending anchor-history backend slice
-before deploying its migration. Verify homepage, diff, thread actions and output
-interactivity in browser tests; run backend/frontend checks and production build.
+are included in responses. Service errors have a retry state, not a false logout.
+Keep the following contract and release checks when extending the entry flow.
 
 Allowed entry contract (confirmed against existing auth/models/api wrapper):
 - `GET /api/session` reuses `require_authenticated_user` and returns only user
@@ -126,6 +139,45 @@ Allowed entry contract (confirmed against existing auth/models/api wrapper):
   service failures get an honest retry state, not false signed-out UI.
 - Verify unauthorized/inactive repositories omitted, invalid session rejected,
   pagination bounded, and the signed-in homepage has no login loop.
+
+### Follow-up verification — 2026-09-14
+
+The "What needs attention" disclosure and its generic findings/guidance panel
+were removed. Necessary rendering notices remain directly visible. Added and
+removed code/Markdown, including whole cells, now use green/red with explicit
+signs/labels. The notebook remains the review surface: source, outputs, and
+inline editors share one document rather than separate dashboard cards.
+
+An actual local reverse-proxy defect was reproduced without a real mutation:
+thread action redirects used the container's internal origin. All four thread
+actions now use sanitized relative redirects, plus JSON responses for enhanced
+forms. Errors retain the submitted draft beside its block; pending requests
+disable duplicate submission. Successful forms clear their own draft and request
+a Next refresh rather than reloading the entire document. Cross-snapshot/full
+reload recovery remains separate work; do not claim durable draft storage.
+
+Backend verification now inventories 20 application method/path pairs. The full
+suite passes 240 cases with isolated databases and mocked external services.
+Frontend unit coverage passes 160 cases. The standard browser suite passes 81
+cases across Chromium, Firefox, and WebKit, including repository selection,
+comment submission through the actual web handlers with a substituted API,
+failures/auth expiration, and retained unrelated drafts. Optional audit/real-Next
+cases are excluded from that passing count. This is not live GitHub acceptance.
+The opt-in Chromium real-Next/RSC test also passed separately: a synthetic HTTP
+API accepted a comment, the refreshed UI showed its new thread, and unrelated
+comment/reply drafts remained. It uses actual Next navigation but no real user
+session or GitHub write.
+
+Saved Plotly HTML containing one literal JSON `Plotly.newPlot` call now feeds
+the existing isolated renderer. No notebook JavaScript is executed. Dynamic or
+multiple-chart HTML and animation frames are explicit unsupported fallbacks;
+maps/geo and custom FigureWidgets remain gaps. Previously prepared snapshots
+need a new build to use backend extraction changes. Do not treat a browser
+refresh as reprocessing stored snapshot data.
+
+See [platform integration](platform-deployment.md) for generic workload, secret,
+ingress, and migration requirements. It is not a validated private-platform
+installer or a claim of production readiness.
 
 ## Release gates
 

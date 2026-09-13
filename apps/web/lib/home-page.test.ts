@@ -1,92 +1,59 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "../app/page";
-
+import { ApiRequestError, getRepositories, getSessionIdentity } from "@/lib/api";
 
 vi.stubGlobal("React", React);
-
-const WORKSPACE_QUICKSTART_URL =
-  "https://notebooklens.github.io/notebooklens/quickstart-workspace/";
-
-async function renderHomePage(
-  searchParams: Record<string, string | string[] | undefined> = {},
-) {
-  return renderToStaticMarkup(
-    await HomePage({ searchParams: Promise.resolve(searchParams) }),
-  );
+vi.mock("@/lib/api", () => ({
+  getRepositories: vi.fn(), getSessionIdentity: vi.fn(),
+  ApiRequestError: class extends Error { constructor(public status: number, public detail: string) { super(detail); } },
+}));
+async function render(params: Record<string, string> = {}) {
+  return renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve(params) }));
 }
+beforeEach(() => {
+  vi.mocked(getSessionIdentity).mockReset();
+  vi.mocked(getRepositories).mockReset();
+});
 
-
-describe("HomePage", () => {
-  it("keeps the landing path singular with one GitHub-first primary action", async () => {
-    const html = await renderHomePage();
-    const primaryButtons = html.match(/class="primary-button"/g) ?? [];
-    const secondaryButtons = html.match(/class="secondary-button"/g) ?? [];
-
-    expect(html).toContain("Next step");
+describe("session-aware homepage", () => {
+  it("shows a compact sign-in view only after API rejects the session", async () => {
+    vi.mocked(getSessionIdentity).mockRejectedValue(new ApiRequestError(401, "Authentication required"));
+    const html = await render();
     expect(html).toContain("Continue with GitHub");
-    expect(html).toContain(
-      "Open changed cells, outputs, and inline comments",
-    );
-    expect(html).toContain(
-      "Open changed cells, outputs, and inline comments for the notebook pull request you need to review.",
-    );
-    expect(html).toContain(
-      'href="/api/auth/github/login?next_path=%2F"',
-    );
-    expect(primaryButtons).toHaveLength(1);
-    expect(secondaryButtons).toHaveLength(0);
-    expect(html.indexOf("Continue with GitHub")).toBeLessThan(
-      html.indexOf("What reviewers actually open"),
-    );
-    expect(html).toContain("The one-time repository setup lives in the");
-    expect(html).toContain("Keep setup details in one place");
-    expect(html).not.toContain("Need setup first?");
-    expect(html).not.toContain("Install the GitHub App review flow");
+    expect(html).toContain('href="/api/auth/github/login?next_path=%2F"');
+    expect(html).not.toContain("Illustration only");
+    expect(getRepositories).not.toHaveBeenCalled();
   });
-
-  it("switches the same primary CTA to the setup reference after GitHub app install returns home", async () => {
-    const html = await renderHomePage({
-      installation_id: "123",
-      setup_action: "install",
-    });
-
-    expect(html).toContain("Open changed cells, outputs, and inline comments");
-    expect(html).toContain(
-      "Use the workspace quick start to open a notebook pull request review with changed cells, rendered outputs, and inline comments already in view.",
-    );
-    expect(html).toContain(`href="${WORKSPACE_QUICKSTART_URL}"`);
-    expect(html).toContain("Open workspace quick start");
-    expect(html).not.toContain(
-      'href="/api/auth/github/login?next_path=%2F"',
-    );
+  it("renders authorized repositories for a verified identity without a login loop", async () => {
+    vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
+    vi.mocked(getRepositories).mockResolvedValue({ repositories: [{ id: "repo1", owner: "example", name: "notebooks", full_name: "example/notebooks", reviews: [{ id: "review1", pull_number: 7, status: "ready", href: "/reviews/example/notebooks/pulls/7" }] }], next_cursor: "opaque-next" });
+    const html = await render({ cursor: "opaque-current" });
+    expect(getRepositories).toHaveBeenCalledWith("opaque-current");
+    expect(html).toContain("Signed in as synthetic-reviewer");
+    expect(html).toContain("example/notebooks");
+    expect(html).toContain("Select a repository");
+    expect(html).toContain("Next repositories");
+    expect(html).not.toContain("Continue with GitHub");
   });
-
-  it("marks the reviewer proof panel as an anchored illustration instead of a detached example thread", async () => {
-    const html = await renderHomePage();
-    const statusPills = html.match(/class="status-pill/g) ?? [];
-
-    expect(html).toContain("Illustration only");
-    expect(html).toContain("Static preview of the latest notebook review workspace");
-    expect(html).toContain(
-      "Status: latest push ready with changed cells, outputs, and 1 open inline comment in view.",
-    );
-    expect(html).toContain("Review target");
-    expect(html).toContain(
-      "sales_forecast.ipynb · changed output plot + markdown diff",
-    );
-    expect(html).toContain("Next action");
-    expect(html).toContain("Open latest push review");
-    expect(statusPills).toHaveLength(0);
-    expect(html).toContain("Changed output");
-    expect(html).toContain("thread anchored here");
-    expect(html).toContain("Open thread");
-    expect(html).toContain(
-      "Attached directly to this changed output before replying on the pull request.",
-    );
-    expect(html).not.toContain("Example inline comment");
-    expect(html).not.toContain("reviewing latest push");
+  it("keeps the empty authorized list honest and does not invent repositories", async () => {
+    vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
+    vi.mocked(getRepositories).mockResolvedValue({ repositories: [], next_cursor: null });
+    expect(await render()).toContain("No accessible repositories on this page.");
+  });
+  it("does not treat upstream failures as a logout or expose internal error details", async () => {
+    vi.mocked(getSessionIdentity).mockRejectedValue(new Error("private-marker"));
+    const html = await render();
+    expect(html).toContain("Could not load your repositories");
+    expect(html).not.toContain("Continue with GitHub");
+    expect(html).not.toContain("private-marker");
+  });
+  it("handles session expiration during the repository request", async () => {
+    vi.mocked(getSessionIdentity).mockResolvedValue({ user: { id: 101, login: "synthetic-reviewer" } });
+    vi.mocked(getRepositories).mockRejectedValue(new ApiRequestError(401, "Session expired"));
+    const html = await render();
+    expect(html).toContain("Continue with GitHub");
+    expect(html).not.toContain("Signed in as");
   });
 });
