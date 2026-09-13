@@ -1,0 +1,23 @@
+docs/api-contract-verification.md
+  s_0b05c17cefffd7::t_042c29d28f5ced 55
+tests/test_workspace_contract.py
+  s_0b05c17cefffd7::t_042c29d28f5ced 24
+apps/web/lib/api.test.ts
+  s_0b05c17cefffd7::t_042c29d28f5ced 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "3795830daebaba12742dd12351a7d937b5412339",
+  "prompts": {},
+  "sessions": {
+    "s_0b05c17cefffd7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09c10-e7a4-73f0-9882-4180b29a13e3",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gottam Sai Bharath <7725109+Gsbreddy@users.noreply.github.com>"
+    }
+  }
+}
