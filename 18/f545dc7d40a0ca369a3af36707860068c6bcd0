@@ -1,0 +1,28 @@
+docs/replacement-plan.md
+  s_0b05c17cefffd7::t_e38b0a223c40b1 60-75
+  s_0b05c17cefffd7::t_ffc2a7cf633b5e 44-47,116-117
+  s_0b05c17cefffd7::t_49d83c5f7ec26c 1-39,76-115,118-123
+  s_0b05c17cefffd7::t_d96bd3d1e214c7 40-43,48-59
+apps/api/worker_loop.py
+  s_0b05c17cefffd7::t_69d24e29e75531 1-156
+deploy/run-managed-service.sh
+  s_0b05c17cefffd7::t_c073900e5ac23d 22
+tests/test_worker_loop.py
+  s_0b05c17cefffd7::t_722d0d56d2993c 1-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "18f545dc7d40a0ca369a3af36707860068c6bcd0",
+  "prompts": {},
+  "sessions": {
+    "s_0b05c17cefffd7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09c10-e7a4-73f0-9882-4180b29a13e3",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gottam Sai Bharath <7725109+Gsbreddy@users.noreply.github.com>"
+    }
+  }
+}
