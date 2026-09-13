@@ -1,0 +1,96 @@
+apps/web/e2e/repository-picker.spec.ts
+  s_0b05c17cefffd7::t_fb22502819d949 10-19
+  s_0b05c17cefffd7::t_5768a8c4829f92 69-72
+apps/web/components/ai-settings-shell.tsx
+  s_0b05c17cefffd7::t_c79e67dcaed6dd 4,14,16
+  s_0b05c17cefffd7::t_92a83495a34afe 15
+apps/web/components/ai-gateway-settings.module.css
+  s_0b05c17cefffd7::t_c79e67dcaed6dd 15,76
+  s_0b05c17cefffd7::t_187d99d07e0bed 75,77
+  s_0b05c17cefffd7::t_77cb46c5976c9e 12-14,19
+apps/web/components/repository-picker.module.css
+  s_0b05c17cefffd7::t_d00513fa2a9b8e 3-6,16,77
+apps/web/e2e/workspace-harness.tsx
+  s_0b05c17cefffd7::t_4e3876211fa92e 52-54,56-66,68
+  s_0b05c17cefffd7::t_11d32253d5dfba 55,67
+apps/web/app/page.tsx
+  s_0b05c17cefffd7::t_5768a8c4829f92 43,47
+  s_0b05c17cefffd7::t_d00513fa2a9b8e 4,39-40,45-46,50-51
+apps/web/lib/review-route.test.ts
+  s_0b05c17cefffd7::t_54a8c4425e2403 102,146
+  s_0b05c17cefffd7::t_cb53f2ec8fa3a8 100-101,103,136,141-145,147-148
+  s_0b05c17cefffd7::t_d5e560a76ba808 149-156
+  s_0b05c17cefffd7::t_413592ec5737b4 7,75-80
+apps/web/AGENTS.md
+  s_0b05c17cefffd7::t_e3b2d4ea44c617 15-20
+apps/web/components/review-workspace.tsx
+  s_0b05c17cefffd7::t_d2d74049252d50 1279-1286,1297-1300
+  s_0b05c17cefffd7::t_d00513fa2a9b8e 15,129,144
+  s_0b05c17cefffd7::t_ce84befdc6bae2 553,568,575,854,858,866,893,931
+  s_0b05c17cefffd7::t_ecc12f0e690b91 1301-1303
+apps/web/e2e/repository-picker-harness.tsx
+  s_0b05c17cefffd7::t_5768a8c4829f92 3,19-21,23
+apps/web/e2e/ai-settings.spec.ts
+  s_0b05c17cefffd7::t_b51b86c47afdd6 22-23,41,43-58
+  s_0b05c17cefffd7::t_c79e67dcaed6dd 78,135
+  s_0b05c17cefffd7::t_7190bce0f06aa5 71-72
+  s_0b05c17cefffd7::t_187d99d07e0bed 42
+  s_0b05c17cefffd7::t_19f2762e082c83 59
+apps/web/e2e/ai-settings-harness.tsx
+  s_0b05c17cefffd7::t_b51b86c47afdd6 7,18-20,22
+apps/web/lib/review-workspace-render.test.ts
+  s_0b05c17cefffd7::t_ca68b51a05afd4 447-458
+  s_0b05c17cefffd7::t_392602e4cb4c30 436-446
+  s_0b05c17cefffd7::t_337a1406e2ca79 435
+apps/web/e2e/workspace-review.spec.ts
+  s_0b05c17cefffd7::t_4e3876211fa92e 116,118-132,142-146
+  s_0b05c17cefffd7::t_11a18f96d3f8bd 133-141
+  s_0b05c17cefffd7::t_c9e3c25f073194 56-57,88-115
+  s_0b05c17cefffd7::t_9994d407836ddd 117
+apps/web/lib/ai-settings-render.test.ts
+  s_0b05c17cefffd7::t_c79e67dcaed6dd 25
+docs/review-ux-plan.md
+  s_0b05c17cefffd7::t_aa55cf6971e874 255-277,284-285
+  s_0b05c17cefffd7::t_9a491605e8b30b 278-279
+  s_0b05c17cefffd7::t_110a01eab84ede 280-283
+apps/web/components/review-route.tsx
+  s_0b05c17cefffd7::t_35845e574838f2 6,20-23,25-30,32,36-45,47-54,56
+  s_0b05c17cefffd7::t_77cb46c5976c9e 46
+apps/api/backfill_commit_subjects.py
+  s_0b05c17cefffd7::t_fdd12e2181da90 1-17,19-46,48-86,88-97,105-106,108-109,111-113,117-125,127-131,133-172,174-178
+  s_0b05c17cefffd7::t_cb9d01ea7ef694 18,47,87,98-104,107,110,114-116,126,132,173
+apps/web/components/workspace-topbar.tsx
+  s_0b05c17cefffd7::t_4badc396147d2d 11
+  s_0b05c17cefffd7::t_d00513fa2a9b8e 1-10,12-19
+apps/web/app/globals.css
+  s_0b05c17cefffd7::t_ce84befdc6bae2 2175-2180
+  s_0b05c17cefffd7::t_b0944e6647337f 2185-2186,2305-2306,2323
+  s_0b05c17cefffd7::t_5768a8c4829f92 2224-2226
+  s_0b05c17cefffd7::t_d2d74049252d50 2267-2269
+  s_0b05c17cefffd7::t_d00513fa2a9b8e 2219-2223
+docs/local-acceptance.md
+  s_0b05c17cefffd7::t_d670cb0e368cb2 229-246
+  s_0b05c17cefffd7::t_911357ebffc934 167-228
+tests/test_commit_subject_backfill.py
+  s_0b05c17cefffd7::t_e1dbceb83bc2d2 41
+  s_0b05c17cefffd7::t_2e196c6189e603 1-40,42-171
+  s_0b05c17cefffd7::t_5a3304bc766671 172-201
+apps/web/app/not-found.tsx
+  s_0b05c17cefffd7::t_413592ec5737b4 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "c2b0287da8f3443a6c7e1661bb87c6e984d81815",
+  "prompts": {},
+  "sessions": {
+    "s_0b05c17cefffd7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09c10-e7a4-73f0-9882-4180b29a13e3",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gottam Sai Bharath <7725109+Gsbreddy@users.noreply.github.com>"
+    }
+  }
+}
