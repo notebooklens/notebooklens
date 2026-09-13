@@ -19,6 +19,8 @@ export async function submitAiGatewaySettingsAction(previous, data) {
 test.beforeAll(async () => {
   const bundle = await build({ entryPoints: [path.join(__dirname, "ai-settings-harness.tsx")], outdir: "ai-test-build", bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "isolated-ai-settings", setup(builder) {
     builder.onResolve({ filter: /^@\/lib\/actions$/ }, () => ({ path: "action", namespace: "ai-mock" }));
+    builder.onResolve({ filter: /^(next\/navigation|@\/lib\/api|@\/components\/review-workspace)$/ }, () => ({ path: "route-dependencies", namespace: "recovery-mock" }));
+    builder.onLoad({ filter: /.*/, namespace: "recovery-mock" }, () => ({ contents: "export class ApiRequestError extends Error {} export const notFound=()=>{}; export const buildLoginHref=()=>''; export const getReviewWorkspace=()=>{}; export const getSnapshotWorkspace=()=>{}; export const ReviewWorkspace=()=>null;", loader: "js" }));
     builder.onLoad({ filter: /.*/, namespace: "ai-mock" }, () => ({ contents: mockAction, loader: "js" }));
     builder.onResolve({ filter: /^next\/link$/ }, () => ({ path: "link", namespace: "ai-next" }));
     builder.onLoad({ filter: /.*/, namespace: "ai-next" }, () => ({ contents: "import React from 'react'; export default function Link({children,...props}){return React.createElement('a',props,children)}", loader: "js", resolveDir: path.join(__dirname, "..") }));
@@ -36,6 +38,25 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); });
 
+test("review recovery keeps context visible and shares AI header geometry", async ({ page }, info) => {
+  for (const width of [1920, 1440, 1280, 700, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.goto(`${origin}?review-recovery`);
+      await expect(page.getByText("example/research · PR #7 · Push 3", { exact: true })).toBeVisible();
+      const reviewBox = await page.locator(".workspace-topbar").boundingBox();
+      await page.screenshot({ path: info.outputPath(`review-recovery-${width}-${colorScheme}.png`), fullPage: true });
+      await page.goto(`${origin}?recovery=forbidden`);
+      const aiBox = await page.locator(".workspace-topbar").boundingBox();
+      expect(aiBox!.x).toBeCloseTo(reviewBox!.x, 0);
+      expect(aiBox!.width).toBeCloseTo(reviewBox!.width, 0);
+      await expect(page.getByRole("link", { name: "Home", exact: true })).toHaveCSS("font-size", "14px");
+      await page.screenshot({ path: info.outputPath(`ai-recovery-${width}-${colorScheme}.png`), fullPage: true });
+    }
+  }
+});
+
 test("AI settings recovery shares the compact shell, keyboard navigation and honest access states", async ({ page }, info) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -47,13 +68,14 @@ test("AI settings recovery shares the compact shell, keyboard navigation and hon
       const home = page.getByRole("link", { name: "Home", exact: true });
       await expect(home).toBeVisible();
       await expect(home).toHaveAttribute("href", "/");
-      await expect(home).toHaveCSS("border-radius", "6px");
+      await expect(home).toHaveCSS("font-size", "14px");
+      await expect(page.locator(".workspace-brand")).toHaveText("NotebookLens");
       await expect(page.getByRole("link", { name: "Back to review" })).toHaveAttribute("href", "/reviews/example/research/pulls/7");
       await expect(page.getByRole("main")).toBeVisible();
       await expect(page.getByRole("button", { name: "Save settings" })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.keyboard.press("Tab");
-      await expect(page.getByRole("link", { name: "Skip to gateway settings" })).toBeFocused();
+      await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
       await page.keyboard.press("Enter");
       await expect(page.getByRole("main")).toBeFocused();
       if (kind === "forbidden") {
@@ -110,7 +132,7 @@ test("AI settings use shared compact tokens, keyboard access and narrow reflow",
     await expect(page.getByLabel("Model name", { exact: true })).toHaveCSS("border-radius", "6px");
     await expect(page.getByRole("button", { name: "Save settings", exact: true })).toHaveCSS("border-radius", "6px");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.keyboard.press("Tab"); await expect(page.getByRole("link", { name: "Skip to gateway settings" })).toBeFocused();
+    await page.keyboard.press("Tab"); await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
     await page.getByLabel("Model name", { exact: true }).focus(); await expect(page.getByLabel("Model name", { exact: true })).toHaveCSS("outline-style", "solid");
     await page.screenshot({ path: info.outputPath(`ai-settings-${width}.png`), fullPage: true });
   }

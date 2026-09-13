@@ -433,6 +433,30 @@ describe("review workspace rendering", () => {
     expect(markup).toContain("Two notebooks changed in this review version.");
   });
 
+  it("labels Markdown review controls truthfully and omits empty discussion spacing", () => {
+    const row = buildRow({ cell_type: "markdown", change_type: "added", source: { base: null, head: "# Findings", changed: true }, outputs: { changed: false, items: [] } });
+    const markup = renderWorkspace(row);
+    expect(markup).toContain("Add comment on Cell 2 markdown");
+    expect(markup).toContain("<h4>Markdown</h4>");
+    expect(markup).not.toContain("<h4>Code</h4>");
+    expect(markup).not.toContain('class="thread-column"');
+    expect(markup).toContain('<span class="sr-only">Added cell</span>');
+    expect(markup).toContain("markdown-pane-added");
+  });
+
+  it("keeps push history to a full subject and one metadata block without changing links", () => {
+    const workspace = buildWorkspace(buildRow());
+    const subject = "Compare weekly observations without truncating the descriptive commit subject";
+    workspace.review.snapshot_history[0].head_commit_subject = subject;
+    const markup = renderWorkspacePayload(workspace);
+    expect(markup).toContain(`<strong>${subject}</strong>`);
+    expect(markup.match(/class="history-caption history-entry-meta"/g)).toHaveLength(1);
+    expect(markup).toContain('dateTime="2026-04-12T12:00:00Z"');
+    expect(markup).toContain('aria-current="page"');
+    expect(markup).toContain(" · Latest");
+    expect(markup).toContain(" · Current");
+  });
+
   it("keeps the default rail focused and moves review signals into collapsible summaries", () => {
     const row = buildRow({
       outputs: {

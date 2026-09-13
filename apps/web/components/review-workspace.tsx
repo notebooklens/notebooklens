@@ -12,6 +12,7 @@ import { computeLineDiff, type DiffLine } from "@/lib/code-diff";
 import { buildSandboxedHtmlDocument } from "@/lib/html-output";
 import { InteractiveOutputFrame } from "@/components/interactive-output-frame";
 import { ThreadMutationForm } from "@/components/thread-mutation-form";
+import { WorkspaceTopbar } from "@/components/workspace-topbar";
 import {
   buildAnchorKey,
   buildAiGatewayRoute,
@@ -125,12 +126,7 @@ export function ReviewWorkspace({
         revealFragment(fragment);
       }
     }}>
-      <nav className="workspace-topbar" aria-label="Workspace navigation">
-        <a className="workspace-skip-link" href={activeView === "changes" ? "#review-changes" : "#review-discussions"}>Skip to review content</a>
-        <div className="workspace-home-links">
-          <Link className="workspace-brand" href="/">NotebookLens</Link>
-          <Link className="text-link" href="/">Home</Link>
-        </div>
+      <WorkspaceTopbar skipHref={activeView === "changes" ? "#review-changes" : "#review-discussions"}>
         <WorkspaceMenu label={<><span aria-hidden="true">☰</span> Settings</>} align="end">
           <h2>Sign-in &amp; team settings</h2>
           <p className="muted-copy">{installationLabel}</p>
@@ -145,7 +141,7 @@ export function ReviewWorkspace({
             </form>
           </div>
         </WorkspaceMenu>
-      </nav>
+      </WorkspaceTopbar>
       <header className="summary-card workspace-pr-strip">
         <div className="workspace-pr-strip-main">
           <p className="workspace-breadcrumb">
@@ -554,6 +550,7 @@ function CellRowCard({
 
       <div className="block-stack">
         {blocks.map((blockKind) => {
+          const blockLabel = blockKind === "source" && row.cell_type === "markdown" ? "Markdown" : blockTitle(blockKind);
           const anchor = row.thread_anchors[blockKind];
           const composerKey = buildAnchorKey(anchor);
           const composerId = buildThreadComposerId(anchor);
@@ -568,14 +565,14 @@ function CellRowCard({
               key={blockKind}
             >
               <div className="diff-block-head">
-                <h4>{blockTitle(blockKind)}</h4>
+                <h4>{blockLabel}</h4>
                 <div className="diff-block-meta">
                   {threads.length ? (
                     <StatusPill label={`${threads.length} thread${threads.length === 1 ? "" : "s"}`} tone="default" />
                   ) : null}
                   {threadable ? (
                     <button
-                      aria-label={`Add comment on ${formatCellLabel(row)} ${blockTitle(blockKind).toLowerCase()}`}
+                      aria-label={`Add comment on ${formatCellLabel(row)} ${blockLabel.toLowerCase()}`}
                       aria-controls={composerId}
                       aria-expanded={composerOpen}
                       className={`${composerOpen ? "secondary-button" : "ghost-button"} thread-affordance-button`}
@@ -854,10 +851,11 @@ function CodePane({
   value: string | null;
   diffLines?: (DiffLine | null)[];
 }) {
+  const labelClass = label === "Added cell" || label === "Removed cell" ? "sr-only" : "code-pane-label";
   if ((!value || value.length === 0) && !diffLines?.length) {
     return (
       <div className="code-pane">
-        <span className="code-pane-label">{label}</span>
+        <span className={labelClass}>{label}</span>
         <pre>{value === null ? "Cell not present on this side." : "Empty source."}</pre>
       </div>
     );
@@ -865,7 +863,7 @@ function CodePane({
 
   return (
     <div className="code-pane">
-      <span className="code-pane-label">{label}</span>
+      <span className={labelClass}>{label}</span>
       <pre className="code-pane-diff">
         {(diffLines ?? []).map((line, index) => (
           <span className={`code-diff-line code-diff-line-${line?.status ?? "placeholder"}`} key={index}>
@@ -892,7 +890,7 @@ function MarkdownPane({
   return (
     <div className={`code-pane markdown-pane${change ? ` markdown-pane-${change}` : ""}`}>
       {change ? <span className="markdown-change-marker" aria-hidden="true">{change === "added" ? "+" : "−"}</span> : null}
-      <span className="code-pane-label">{label}</span>
+      <span className={change ? "sr-only" : "code-pane-label"}>{label}</span>
       {value && value.length > 0 ? (
         <div className="markdown-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
@@ -930,6 +928,7 @@ function ThreadColumn({
   onCancelComposer,
 }: ThreadColumnProps) {
   const showThreadingNote = !threadable && threads.length === 0;
+  if (!composerOpen && threads.length === 0 && !showThreadingNote) return null;
 
   return (
     <div className="thread-column">
@@ -1277,8 +1276,14 @@ function SnapshotHistoryRailCard({
               >
                 <span className="history-entry-copy">
                   <strong>{entry.head_commit_subject || "Commit subject unavailable"}</strong>
-                  <span className="history-caption">Push {entry.snapshot_index}{entry.is_latest ? " · Latest" : ""}{review.selected_snapshot_index === entry.snapshot_index ? " · Current" : ""} · {entry.head_sha.slice(0, 8)}</span>
-                  <span className="history-caption">Saved {formatTimestamp(entry.created_at)}</span>
+                  <span className="history-caption history-entry-meta">
+                    Push {entry.snapshot_index} · {entry.head_sha.slice(0, 8)} · Saved{" "}
+                    <time dateTime={entry.created_at} title={formatTimestamp(entry.created_at)}>
+                      {formatHistoryTimestamp(entry.created_at)}
+                    </time>
+                    {entry.is_latest ? " · Latest" : ""}
+                    {review.selected_snapshot_index === entry.snapshot_index ? " · Current" : ""}
+                  </span>
                 </span>
               </Link>
             );
@@ -1286,6 +1291,13 @@ function SnapshotHistoryRailCard({
       </nav>
     </WorkspaceMenu>
   );
+}
+
+
+function formatHistoryTimestamp(value: string): string {
+  return new Intl.DateTimeFormat("en", {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(value));
 }
 
 

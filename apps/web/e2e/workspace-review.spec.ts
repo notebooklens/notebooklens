@@ -53,8 +53,8 @@ for (const width of [1440, 1280, 390]) {
     await history.click();
     const historyNav = page.getByRole("navigation", { name: "Push history" });
     await expect(historyNav.getByRole("link", { name: /Push 1/ })).toHaveAttribute("aria-current", "page");
-    await expect(historyNav.getByRole("link", { name: /Push 2 · Latest/ })).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
-    await historyNav.getByRole("link", { name: /Push 2 · Latest/ }).click({ trial: true });
+    await expect(historyNav.getByRole("link", { name: /Push 2/ })).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
+    await historyNav.getByRole("link", { name: /Push 2/ }).click({ trial: true });
     await page.screenshot({ path: info.outputPath(`pushes-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await details.click();
@@ -82,6 +82,65 @@ for (const width of [1440, 1280, 390]) {
     await topbar.getByRole("link", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL(`${origin}/`);
     expect(errors).toEqual([]);
+  });
+}
+
+for (const width of [1440, 1280, 390]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`compact history preserves subjects and version context at ${width}px ${colorScheme}`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme });
+      await page.goto(`${origin}?seven-versions`);
+      await page.locator("summary").filter({ hasText: /^Switch push$/ }).click();
+      const history = page.getByRole("navigation", { name: "Push history" });
+      const current = history.getByRole("link").first();
+      await expect(current).toHaveAttribute("aria-current", "page");
+      await expect(current).toHaveAttribute("href", "/reviews/octo-org/notebooklens/pulls/7");
+      await expect(current.locator(".history-entry-copy > *")).toHaveCount(2);
+      await expect(current.locator("strong")).toHaveText("Refine notebook analysis 7: compare weekly observations and preserve the full descriptive commit subject for reviewers");
+      await expect(current.locator(".history-entry-meta")).toContainText("Push 7 · head-sha · Saved");
+      await expect(current.locator(".history-entry-meta")).toContainText("Latest · Current");
+      await expect(current.locator("time")).toHaveAttribute("datetime", "2026-04-12T12:00:00Z");
+      expect(await history.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+      expect(await history.evaluate((node) => getComputedStyle(node).rowGap)).toBe("4px");
+      await page.screenshot({ path: info.outputPath(`compact-history-${width}-${colorScheme}.png`) });
+      if (width === 1280) {
+        await page.locator("body").evaluate((node) => { (node as HTMLElement).style.zoom = "2"; });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        const panel = await history.boundingBox();
+        expect(panel!.x).toBeGreaterThanOrEqual(0);
+        expect(panel!.x + panel!.width).toBeLessThanOrEqual(width);
+      }
+    });
+  }
+}
+
+for (const width of [1440, 1280, 390]) {
+  test(`mixed notebook cells keep compact spacing and contextual labels at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${origin}?mixed-cells`);
+    const markdown = page.locator(".cell-card").first();
+    await expect(markdown.getByRole("heading", { name: "Markdown", exact: true })).toBeVisible();
+    await expect(markdown.getByRole("heading", { name: "Code", exact: true })).toHaveCount(0);
+    await expect(markdown.getByRole("button", { name: "Add comment on Cell 1 markdown" })).toBeVisible();
+    await expect(page.locator(".thread-column")).toHaveCount(0);
+    await expect(markdown.locator(".markdown-change-marker")).toHaveText("+");
+    const gutter = await markdown.locator(".thread-affordance-button").boundingBox();
+    const head = await markdown.locator(".diff-block-head").boundingBox();
+    expect(Math.abs(gutter!.y - head!.y)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: info.outputPath(`mixed-cells-${width}-light.png`), fullPage: true });
+    await page.emulateMedia({ colorScheme: "dark" });
+    const affordance = markdown.getByRole("button", { name: "Add comment on Cell 1 markdown" });
+    await expect(affordance).toBeEnabled();
+    const colors = await affordance.evaluate((node) => {
+      const style = getComputedStyle(node);
+      const luminance = (color: string) => (color.match(/\d+/g) ?? []).slice(0, 3).map(Number).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+      const values = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => a - b);
+      return { color: style.color, background: style.backgroundColor, opacity: style.opacity, contrast: (values[1] + 0.05) / (values[0] + 0.05) };
+    });
+    expect(colors.contrast, JSON.stringify(colors)).toBeGreaterThanOrEqual(4.5);
+    await page.screenshot({ path: info.outputPath(`mixed-cells-${width}-dark.png`), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   });
 }
 

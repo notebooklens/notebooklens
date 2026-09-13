@@ -49,6 +49,23 @@ if (window.location.search.includes("markdown")) {
   for (const anchor of Object.values(row.thread_anchors)) anchor.cell_type = "markdown";
 }
 workspace.threads = [buildThread(row)];
+if (window.location.search.includes("mixed-cells")) {
+  const markdown = buildRow({
+    cell_type: "markdown", change_type: "added",
+    summary: "Introduction added.",
+    locator: { cell_id: "intro", base_index: null, head_index: 0, display_index: 0 },
+    source: { base: null, head: "# Weekly observations\nReview the updated sample before interpreting the result.", changed: true },
+    outputs: { changed: false, items: [] },
+  });
+  for (const anchor of Object.values(markdown.thread_anchors)) {
+    anchor.cell_type = "markdown";
+    anchor.cell_locator = markdown.locator;
+    anchor.source_fingerprint = `intro-${anchor.block_kind}`;
+  }
+  workspace.snapshot!.payload.review.notebooks[0].render_rows.unshift(markdown);
+  workspace.threads = [];
+  workspace.review.thread_counts.unresolved = 0;
+}
 if (window.location.search.includes("original-context")) {
   workspace.threads[0].anchor_drifted = true;
   workspace.threads[0].origin_snapshot_id = "original-snapshot";

@@ -164,3 +164,83 @@ JSON 400. These probes create no comments. Stored snapshots are immutable:
 backend Plotly extraction changes require a newly prepared snapshot, not just
 a browser refresh. These deployment checks do not establish authenticated live
 GitHub commenting or complete ReviewNB/Plotly parity.
+
+## Backfill commit subjects on existing snapshots
+
+Snapshots prepared before commit-subject enrichment have no `head_commit` field.
+Refreshing the browser does not fetch missing titles. The operator module below
+fills only this display metadata, without rebuilding notebook snapshots, posting
+GitHub comments, configuring AI, or changing discussions/anchors. It uses the
+existing installation's Contents:read authorization and exact stored head SHA.
+It does not recover commits which GitHub can no longer serve.
+
+First obtain approval for the exact review and inspect its UUID and repository/PR
+identity read-only. The module requires **all four selectors to match**, an active
+repository, and ready snapshots. Run it from a trusted API image with the current
+operator configuration; do not paste environment values or keys into commands.
+The existing Compose overlay remains mandatory. The API image must include
+`apps/api/backfill_commit_subjects.py`; building an image does not require
+restarting the running API or worker.
+
+Default dry run makes no GitHub calls and no database writes. Replace the
+synthetic selectors below with the approved review's identity:
+
+```sh
+docker compose -p notebooklens-acceptance -f deploy/docker-compose.yml -f deploy/docker-compose.acceptance.yml --env-file deploy/.env.acceptance run --rm --no-deps api python -m apps.api.backfill_commit_subjects --review-id 00000000-0000-0000-0000-000000000001 --owner example --repo notebooks --pull-number 1 --limit 20
+```
+
+Before `--apply`, create a fresh private PostgreSQL custom-format backup outside
+the checkout using `pg_dump -Fc`, mode 0600, with a private parent directory.
+Do not print dump contents or place it in an image build context. Validate the
+archive and restore it into a newly created disposable database; compare the
+schema revision and aggregate review/snapshot/thread counts. If validation fails,
+stop. Do not drop or restore over the active database. Remove only the explicit
+disposable validation database afterward; retain the private backup. This is a
+data-preserving metadata operation, not a schema migration; a schema mismatch
+must be investigated before any write.
+
+After approving the backup validation, repeat the same explicit command with
+`--apply`. Each invocation scans at most `--limit` ready snapshots (default 20,
+maximum 50), in snapshot-index order, and makes at most one authenticated lookup
+per distinct eligible SHA in that batch. A lookup uses the existing 30-second
+request timeout; there is no automatic retry loop. Output contains aggregate
+counts and a `next_after_snapshot_index`, never titles, notebook content, tokens,
+or upstream error details. Use `--after-snapshot-index N` to continue a large
+review. A non-empty final batch does not prove there are more rows; a subsequent
+empty batch establishes completion of the scan.
+
+Valid titles are never overwritten. Null/missing subjects are explicitly retried
+even if an earlier build cached failure. A failed lookup leaves the original JSON
+unchanged, and can be retried by rerunning the same batch/cursor; do not advance
+past failures without noting them. Subjects are plain text, first line only,
+bounded to 500 characters, and never inferred from a branch or PR title. Other
+fields inside `head_commit`, all other snapshot JSON, and snapshot identity,
+timestamps, source/output data, and discussions remain unchanged.
+
+Updates use an optimistic compare-and-swap on the original snapshot JSON, head
+SHA, ready status, and active repository. Concurrent changes are skipped and
+reported as conflicts instead of overwritten. No row lock is held during GitHub
+requests. Each invocation commits once after processing its bounded batch;
+unexpected transaction errors roll back the batch. This is not a claim of
+multi-worker load-test coverage. Verify aggregate counts before/after and reopen
+the same saved snapshot in the UI; a successful count alone is not visual
+acceptance. No service restart or notebook rebuild is required for the new
+history labels to become readable.
+
+### Subject backfill pilot evidence — 2026-09-14
+
+An approved nine-snapshot pilot review contained nine legacy snapshots without
+`head_commit` metadata. A private mode-0600 custom-format PostgreSQL backup was
+restored into a new disposable database; schema revision and aggregate
+review/snapshot/thread/message counts matched. The scoped operator batch fetched
+all nine actual commit subjects and updated nine metadata entries, with no
+unavailable results or conflicts. A subsequent dry run reported nine unchanged
+snapshots and no eligible updates or GitHub lookups.
+
+Before/after one-way hashes of snapshot rows and payloads excluding `head_commit`,
+and all discussion/message rows, matched exactly. The nine snapshots, one thread,
+two messages, and schema revision `20260913_0007` were preserved. No snapshot
+rebuild, GitHub comment, AI request, or permission change was performed. The
+temporary validation database and copied operator module were removed; the
+private backup remains outside the checkout. These are data-integrity and real
+commit-lookup checks, not a claim of full browser or ReviewNB acceptance.

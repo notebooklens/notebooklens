@@ -1,6 +1,7 @@
 import { ApiRequestError, getRepositories, getSessionIdentity } from "@/lib/api";
 import { buildLoginHref } from "@/lib/public-hrefs";
 import { RepositoryPicker } from "@/components/repository-picker";
+import { WorkspaceTopbar } from "@/components/workspace-topbar";
 import styles from "@/components/repository-picker.module.css";
 import { readFlashNotice } from "@/lib/review-workspace";
 
@@ -35,15 +36,17 @@ export default async function HomePage({ searchParams }: PageProps) {
       </section>;
     }
   }
-  return <main className={styles.page}>
-    <header className={styles.header}>
-      <h1>NotebookLens</h1>
+  return <div className={styles.page}>
+    <WorkspaceTopbar skipHref="#repository-content">
       {login ? <div className={styles.identity}>
         <span>Signed in as {login}</span>
-        <form action="/actions/auth/logout" method="post"><input type="hidden" name="returnTo" value="/" /><button className={styles.signOut} type="submit">Sign out</button></form>
+        <form action="/actions/auth/logout" method="post"><input type="hidden" name="returnTo" value="/" /><button className="workspace-topbar-action" type="submit">Sign out</button></form>
       </div> : null}
-    </header>
+    </WorkspaceTopbar>
+    <main id="repository-content" tabIndex={-1}>
+    <h1 className="sr-only">Notebook reviews</h1>
     {notice ? <p className={styles.entry} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
     {content}
-  </main>;
+    </main>
+  </div>;
 }

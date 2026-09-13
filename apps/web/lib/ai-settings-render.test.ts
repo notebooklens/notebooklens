@@ -22,7 +22,7 @@ describe("AI gateway settings rendering", () => {
     expect(html).toMatch(/name="apiKey"[^>]*value=""/);
     expect(html).toContain("Save updates settings without running a connection test");
     expect(html).toContain("Testing does not save or activate the gateway");
-    expect(html).toContain("Skip to gateway settings");
+    expect(html).toContain("Skip to main content");
     expect(html).toContain('aria-label="Workspace navigation"');
     expect(html).toMatch(/href="\/">Home<\/a>/);
     expect(html).toContain("Back to review");

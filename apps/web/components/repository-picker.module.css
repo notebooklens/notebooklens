@@ -1,26 +1,19 @@
 .page {
   min-height: 100vh;
-  padding: var(--ui-space-5);
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--ui-space-4);
   background: var(--ui-subtle);
   color: var(--ui-ink);
   font: var(--ui-font-size)/var(--ui-line-height) system-ui, sans-serif;
   position: relative;
   z-index: 1;
 }
-.header {
-  max-width: 1000px;
-  margin: 0 auto var(--ui-space-6);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-space-4);
-  flex-wrap: wrap;
-}
-.header h1 { margin: 0; font-size: var(--ui-heading-size); font-weight: var(--ui-heading-weight); }
 .identity { display: flex; gap: var(--ui-space-3); align-items: center; }
 .picker, .entry {
   max-width: 760px;
-  margin: 0 auto;
+  margin: var(--ui-space-4) auto 0;
   padding: var(--ui-space-5);
   background: var(--ui-surface);
   border: 1px solid var(--ui-border);
@@ -81,4 +74,4 @@
   .signIn { color: var(--ui-surface); }
 }
 .page a:focus-visible, .page button:focus-visible, .page input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
-@media (max-width: 600px) { .page, .picker, .entry { padding: var(--ui-space-4); } .row { padding: var(--ui-space-3); } }
+@media (max-width: 767px) { .page { padding: var(--ui-space-2); } .picker, .entry { padding: var(--ui-space-4); } .row { padding: var(--ui-space-3); } }

@@ -7,7 +7,16 @@ import path from "node:path";
 let server: Server;
 let origin: string;
 test.beforeAll(async () => {
-  const result = await build({ entryPoints: [path.join(__dirname, "repository-picker-harness.tsx")], bundle: true, write: false, outdir: "test-bundle", platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } });
+  const result = await build({ entryPoints: [path.join(__dirname, "repository-picker-harness.tsx")], bundle: true, write: false, outdir: "test-bundle", platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, plugins: [{
+    name: "synthetic-next-link",
+    setup(builder) {
+      builder.onResolve({ filter: /^next\/link$/ }, () => ({ path: "link", namespace: "synthetic-link" }));
+      builder.onLoad({ filter: /.*/, namespace: "synthetic-link" }, () => ({
+        contents: "import React from 'react'; export default function Link({children,...props}) { return React.createElement('a', props, children); }",
+        loader: "js", resolveDir: path.join(__dirname, ".."),
+      }));
+    },
+  }] });
   const script = result.outputFiles.find(file => file.path.endsWith(".js"))!;
   const moduleCss = result.outputFiles.find(file => file.path.endsWith(".css"))!;
   const globals = await readFile(path.join(__dirname, "../app/globals.css"), "utf8");
@@ -57,7 +66,10 @@ for (const [width, height] of [[1440, 900], [1280, 800], [390, 844]]) {
     const filter = page.getByRole("searchbox", { name: "Filter loaded repositories" });
     await expect(page.getByRole("heading", { name: "Select a repository" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Repository reviews" })).toHaveCSS("border-radius", "6px");
-    await expect(page.getByRole("heading", { name: "NotebookLens", exact: true })).toHaveCSS("font-size", "20px");
+    await expect(page.getByRole("link", { name: "NotebookLens", exact: true })).toHaveCSS("font-size", "14px");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
+    await page.keyboard.press("Enter");
     await page.keyboard.press("Tab");
     await expect(filter).toBeFocused();
     await expect(filter).toHaveCSS("outline-style", "solid");

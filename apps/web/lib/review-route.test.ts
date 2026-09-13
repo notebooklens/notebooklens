@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewRoute } from "../components/review-route";
 import { ApiRequestError } from "@/lib/api";
+import NotFoundPage from "@/app/not-found";
 
 
 vi.stubGlobal("React", React);
@@ -71,6 +72,12 @@ beforeEach(() => {
 
 
 describe("ReviewRoute", () => {
+  it("renders the shared navigation on the not-found page", () => {
+    const html = renderToStaticMarkup(React.createElement(NotFoundPage));
+    expect(html).toContain("Page not found");
+    expect(html).toContain('class="workspace-topbar"');
+    expect(html).toMatch(/href="\/"[^>]*>Home<\/a>/);
+  });
   it("renders a review-first auth interstitial for the latest review route", async () => {
     apiMocks.getReviewWorkspace.mockRejectedValue(
       new ApiRequestError(401, "Unauthorized"),
@@ -90,16 +97,10 @@ describe("ReviewRoute", () => {
       7,
     );
     expect(html).toContain("octo-org/notebooklens · PR #7");
-    expect(html).toContain("NotebookLens review workspace");
-    expect(html).toContain("Sign-in required");
-    expect(html).toContain(
-      "Open changed cells, outputs, and inline comments for this PR.",
-    );
-    expect(html).toContain(
-      "Changed cells, outputs, and inline comments stay front and center",
-    );
-    expect(html).toContain("Continue to octo-org/notebooklens · PR #7");
-    expect(html).toContain("Cells, outputs, and inline comments");
+    expect(html).toContain("Sign in to open this review");
+    expect(html).toContain('class="workspace-topbar"');
+    expect(html).toMatch(/href="\/"[^>]*>Home<\/a>/);
+    expect(html).not.toContain("review-entry-preview");
     expect(html).not.toContain(
       "Use the GitHub account that can already open octo-org/notebooklens.",
     );
@@ -132,12 +133,25 @@ describe("ReviewRoute", () => {
       3,
     );
     expect(html).toContain("octo-org/notebooklens · PR #7 · Push 3");
-    expect(html).toContain("Push 3 snapshot");
-    expect(html).toContain(
-      "Continue to octo-org/notebooklens · PR #7 · Push 3",
-    );
+    expect(html).toContain("Continue with GitHub");
     expect(html).toContain(
       "next_path=%2Freviews%2Focto-org%2Fnotebooklens%2Fpulls%2F7%2Fsnapshots%2F3",
     );
+  });
+
+  it.each([403, 502])("keeps shared navigation and hides upstream details for %s", async (status) => {
+    apiMocks.getReviewWorkspace.mockRejectedValue(new ApiRequestError(status, "PRIVATE_UPSTREAM_MARKER"));
+    const html = await renderRoute({ currentPath: "/reviews/example/notebooks/pulls/7", owner: "example", repo: "notebooks", pullNumber: 7, searchParams: {} });
+    expect(html).toContain('class="workspace-topbar"');
+    expect(html).toMatch(/href="\/"[^>]*>Home<\/a>/);
+    expect(html).not.toContain("PRIVATE_UPSTREAM_MARKER");
+    expect(html).toContain(status === 403 ? "Review access could not be verified" : "Try again");
+  });
+  it("keeps recovery available when sign-in URL configuration fails", async () => {
+    apiMocks.getReviewWorkspace.mockRejectedValue(new ApiRequestError(401, "Unauthorized"));
+    apiMocks.buildLoginHref.mockImplementationOnce(() => { throw new Error("PRIVATE_CONFIG_MARKER"); });
+    const html = await renderRoute({ currentPath: "/reviews/example/notebooks/pulls/7", owner: "example", repo: "notebooks", pullNumber: 7, searchParams: {} });
+    expect(html).toContain("Try again");
+    expect(html).not.toContain("PRIVATE_CONFIG_MARKER");
   });
 });

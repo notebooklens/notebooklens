@@ -9,10 +9,14 @@
   background: var(--ai-subtle);
   color: var(--ai-ink);
   min-height: 100vh;
-  padding: 24px;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 16px;
   font: 400 var(--ui-font-size, 14px)/var(--ui-line-height, 1.5) -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .page *, .page *::before, .page *::after { box-sizing: border-box; }
+.page > nav { margin: 0 auto 16px; }
 .header, .main { width: 100%; max-width: 1040px; margin: 0 auto; }
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 0 0 24px; }
 .headerLinks { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
@@ -68,8 +72,10 @@
 .page code { font: var(--ui-code-font-size, 13px)/var(--ui-line-height, 1.5) ui-monospace, SFMono-Regular, Consolas, monospace; border-radius: var(--ui-radius-small, 4px); overflow-wrap: anywhere; }
 .skipLink { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .skipLink:focus { position: static; display: block; width: auto; height: auto; clip-path: none; padding: 8px; background: var(--ai-surface); color: var(--ai-accent); }
+@media (max-width: 767px) {
+  .page { padding: 8px; }
+}
 @media (max-width: 640px) {
-  .page { padding: 16px; }
   .header { flex-direction: column; gap: 12px; padding-bottom: 16px; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .actions { align-items: stretch; flex-direction: column; }

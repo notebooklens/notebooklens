@@ -252,6 +252,37 @@ cross-version durable drafts, and previously documented rendering/parity gaps
 remain separate acceptance work. No live acceptance is inferred from synthetic
 screenshots or local health checks.
 
+### Shared navigation and existing-version titles — 2026-09-14
+
+Home, reviews, AI settings, and their recoverable error/not-found states now use
+one compact navigation component. The NotebookLens brand/Home links and settings
+placement stay consistent while each page retains its own task context. The
+review surface keeps notebook content prominent with tighter cell spacing;
+history entries use compact subject-first rows with saved time, SHA, and push
+identity as secondary information. Dark-theme and responsive shell styling are
+shared rather than relying on the old decorative error layout.
+
+The scoped operator backfill filled actual commit subjects for all nine existing
+pilot snapshots without rebuilding them. A private backup was restored and
+validated first; counts and hashes proved that all snapshot data other than the
+new title metadata, and all thread/message data, remained unchanged. A repeated
+dry run found nine unchanged snapshots and made no requests or writes. The
+reusable operator tool defaults to dry run, requires an exact review/repository/PR
+selector, bounds its batch, retries missing titles deliberately, and uses
+compare-and-swap updates to avoid overwriting concurrent changes. See the
+[operator runbook and integrity evidence](local-acceptance.md#backfill-commit-subjects-on-existing-snapshots).
+
+Verified working-tree evidence for this slice: 269 backend tests on Python 3.12,
+184 frontend unit tests, and 132 standard browser cases across Chromium, Firefox,
+and WebKit passed. The standard run skipped 12 opt-in cases; skips are not passes.
+API, worker, and web Docker image builds also passed. A separate focused
+responsive run passed 12 cases, and the actual-Next Chromium integration case
+passed with a synthetic authenticated API. The final gutter/dark-contrast
+refinement passed nine focused mixed-cell cases across Chromium, Firefox, and
+WebKit at 1440, 1280, and 390 pixels, with measured text contrast at least 4.5:1
+immediately after switching themes. No full accessibility, two-way GitHub synchronization,
+or ReviewNB replacement acceptance is inferred from these checks.
+
 ## Release gates
 
 Fresh verification and anti-pattern/code-quality review before commits/push.

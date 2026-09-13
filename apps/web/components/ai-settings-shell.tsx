@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import type { ReactNode } from "react";
+import { WorkspaceTopbar } from "./workspace-topbar";
 import styles from "./ai-gateway-settings.module.css";
 
 export function AiSettingsShell({ context, reviewHref, children }: {
@@ -10,17 +11,15 @@ export function AiSettingsShell({ context, reviewHref, children }: {
 }) {
   return (
     <div className={styles.page}>
-      <a className={styles.skipLink} href="#ai-settings-main" tabIndex={0}>Skip to gateway settings</a>
+      <WorkspaceTopbar skipHref="#ai-settings-main">
+        <Link className="workspace-topbar-action" href={reviewHref as Route}>Back to review</Link>
+      </WorkspaceTopbar>
       <header className={styles.header}>
         <div>
           <p className={styles.breadcrumb}>{context}</p>
           <h1>AI review settings</h1>
           <p>Optional LiteLLM gateway for managed notebook reviews. Notebook diffs do not require AI.</p>
         </div>
-        <nav className={styles.headerLinks} aria-label="Workspace navigation">
-          <Link className={styles.secondaryButton} href="/">Home</Link>
-          <Link className={styles.secondaryButton} href={reviewHref as Route}>Back to review</Link>
-        </nav>
       </header>
       <main id="ai-settings-main" className={styles.main} tabIndex={-1}>{children}</main>
     </div>

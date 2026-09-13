@@ -12,6 +12,12 @@ Before changing UI code, styles, layout, or interactions, read
   and the push selector beside push details. Do not move essential navigation
   below the notebook. Menus must support Escape, outside dismissal, visible focus
   at jump destinations, and targets unobscured by sticky headers.
+- Reuse `WorkspaceTopbar` for home, review, settings, and recovery/not-found
+  surfaces. Keep brand/Home typography, header outer width, padding, and control
+  styles identical; put page-specific review controls below the shared bar.
+  Readable form bodies may be narrower than notebook diffs. Test computed header
+  geometry across these pages at the same viewports, including 1920 px as well as
+  1440, 1280, and 390 px, so max-width differences do not hide in smaller tests.
 - Preserve drafts across blocks/views and errors; keep cell labels consistently
   one-based. Do not let moved cells disappear under unchanged-source filtering.
 - Use semantic keyboard-operable controls and verify contrast, focus, zoom/reflow,
